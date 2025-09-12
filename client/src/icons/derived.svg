@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  <!-- A grid or table with a new, added column. -->
+  <path d="M4 4h10v16H4zM4 8h10M8 4v16" fill="none" stroke="#00aaff" stroke-width="1.5" />
+  <!-- Plus sign to represent the derived column. -->
+  <path d="M18 10h-2v2h2v2h2v-2h2v-2h-2v-2h-2z" fill="#00aaff" />
+</svg>

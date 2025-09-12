@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  <!-- Define the linear gradient for the column to show condition changes -->
+  <defs>
+    <linearGradient id="conditionalGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#00aaff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00aaff;stop-opacity:0.3" />
+    </linearGradient>
+  </defs>
+  <!-- The main column shape filled with the gradient -->
+  <path d="M7 4h10v16H7z" fill="url(#conditionalGradient)" stroke="#00aaff" stroke-width="1.5" />
+  <!-- A small arrow indicating the data flow or a rule -->
+  <path d="M12 20v-4" stroke="#00aaff" stroke-width="1.5" stroke-linecap="round" />
+  <path d="M9 17l3 3 3-3" fill="none" stroke="#00aaff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

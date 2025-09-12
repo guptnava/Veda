@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  
+  <!-- Solid bin body -->
+  <path d="M8 7h8l-1 13H9z" fill="#00aaff" stroke="#66caff" stroke-width="1.5" stroke-linejoin="round"/>
+  
+  <!-- Solid bin lid -->
+  <rect x="6" y="5" width="12" height="2" fill="#00aaff" stroke="#66caff" stroke-width="1.5" stroke-linejoin="round"/>
+  
+  <!-- Simple "X" to symbolize deletion -->
+  <path d="M10 12l4 4M14 12l-4 4" fill="none" stroke="#66caff" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

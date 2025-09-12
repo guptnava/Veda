@@ -1,0 +1,47 @@
+<svg width="300" height="100" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100">
+  <!-- Background Gradient -->
+  
+    <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#66E0FF"/><stop offset="1" stop-color="#2979FF"/>
+    </linearGradient>
+  </defs>
+  <!-- DB stack -->
+  <ellipse cx="64" cy="36" rx="28" ry="10" fill="url(#g)"/>
+  <path d="M36 36v34c0 6 12 10 28 10s28-4 28-10V36" fill="#0B2A8A"/>
+  <!-- Orbits -->
+  <circle cx="64" cy="58" r="42" stroke="#92E5FF" stroke-width="3" opacity=".6"/>
+  <ellipse cx="64" cy="58" rx="48" ry="20" stroke="#1EC3FF" stroke-width="2" opacity=".6"/>
+  <!-- Node -->
+  <circle cx="100" cy="58" r="5" fill="#00FFC8"/>
+  
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667EEA;stop-opacity:0.1" />
+      <stop offset="100%" style="stop-color:#764BA2;stop-opacity:0.1" />
+    </linearGradient>
+  </defs>
+  <rect width="300" height="100" fill="url(#bgGrad)" rx="10" />
+
+  <!-- Mesh Icon -->
+  <g fill="none" stroke="#6D28D9" stroke-width="2">
+    <!-- Nodes -->
+    <circle cx="50" cy="30" r="4" fill="#D1D5DB" />
+    <circle cx="80" cy="30" r="4" fill="#D1D5DB" />
+    <circle cx="50" cy="70" r="4" fill="#D1D5DB" />
+    <circle cx="80" cy="70" r="4" fill="#D1D5DB" />
+    <!-- Connections -->
+    <line x1="50" y1="30" x2="80" y2="30" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <line x1="50" y1="70" x2="80" y2="70" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <line x1="50" y1="30" x2="50" y2="70" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <line x1="80" y1="30" x2="80" y2="70" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <line x1="50" y1="30" x2="80" y2="70" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <line x1="80" y1="30" x2="50" y2="70" stroke="#A78BFA" stroke-dasharray="3,3" />
+    <!-- Glowing Central Node -->
+    <circle cx="65" cy="50" r="6" fill="#6D28D9" />
+  </g>
+
+  <!-- Text: MindMesh -->
+  <text x="100" y="60" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="bold" fill="#6D28D9">Insight</text>
+  <text x="160" y="60" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="normal" fill="#D1D5DB">Bot</text>
+</svg>

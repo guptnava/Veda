@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  <!-- Solid, light blue fill for the sort arrows -->
+  <path d="M12 4L8 8H16Z" fill="#00aaff" />
+  <path d="M12 20L8 16H16Z" fill="#00aaff" />
+  <!-- The "X" to symbolize clearing the sort, using a lighter blue stroke -->
+  <path d="M8 8 L16 16 M16 8 L8 16" stroke="#66caff" stroke-width="2" stroke-linecap="round" />
+</svg>

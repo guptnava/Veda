@@ -1,0 +1,35 @@
+oracle:
+  dsn: "localhost:1521/riskintegov2"   # e.g. "db.example.com:1521/ORCLPDB1"
+  user: "riskintegov2"
+  password: "riskintegov2"
+  mode: "thin"        # "thin" (default) or "thick"
+  encoding: "UTF-8"
+schema:
+  include_schemas: ["riskintegov2"]         # Oracle schemas to include
+  exclude_tables: []              # optional
+  sample_rows_per_table: 5        # for value-based hints
+generation:
+  max_questions_per_table: 50
+  max_paraphrases_per_question: 5
+  paraphrase_strategy: "wordnet"  # "wordnet" | "none"
+embeddings:
+  backend: "sentence-transformers"
+  model_name: "/Users/naveengupta/veda-chatbot/api/local_all-MiniLM-L6-v2"
+  batch_size: 64
+index:
+  backend: "oracle"               # "oracle" or "faiss"
+  table_name: "NLP_EMBEDDINGS"    # used when backend=oracle
+  faiss_factory: "IVF64,Flat"     # used when backend=faiss
+  nprobe: 8                       # used when backend=faiss
+  vector_dim: 384                 # used for Oracle table DDL
+  prefer_native_vector: true      # try Oracle 23ai VECTOR; auto-fallback if unavailable
+eval:
+  k_values: [1, 3, 5, 10]
+  normalize: true
+  seed: 42
+validation:
+  execute_sql: false
+  max_rows: 10
+outputs:
+  reports_dir: "reports"
+  data_dir: "data"

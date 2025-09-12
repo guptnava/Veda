@@ -1,0 +1,17 @@
+[run]
+branch = True
+source =
+    api/Training/utils
+    api/database_NoLLM_agent
+    api/Training
+
+[report]
+show_missing = True
+skip_covered = False
+omit =
+    api/Training/training_app.py
+    api/**/llm_cache/*
+    api/**/query_cache/*
+    agent/**
+    server/**
+    client/**

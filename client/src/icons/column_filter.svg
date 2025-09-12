@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  <!-- Columns -->
+  <rect x="3" y="10" width="3" height="12" fill="#00aaff" stroke="none" />
+  <rect x="10" y="7" width="3" height="15" fill="#00aaff" stroke="none" />
+  <rect x="17" y="14" width="3" height="8" fill="#00aaff" stroke="none" />
+  <!-- Filter Funnel -->
+  <path d="M22 3H2L10 12V21H14V12L22 3Z" fill="#00aaff" stroke="none" />
+</svg>

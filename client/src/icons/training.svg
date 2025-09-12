@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  
+  <!-- Robot head -->
+  <rect x="10" y="4" width="4" height="4" rx="1" fill="#00aaff" />
+  <!-- Robot antennas -->
+  <path d="M11 3v-1m2 1v-1" stroke="#66caff" stroke-width="1.5" stroke-linecap="round" />
+  
+  <!-- Robot body -->
+  <rect x="8" y="8" width="8" height="6" rx="1" fill="#00aaff" />
+  
+  <!-- Robot arm holding a pointer -->
+  <path d="M16 11l4-2m-3 1.5l1 1" stroke="#66caff" stroke-width="1.5" stroke-linecap="round" />
+  
+  <!-- Database cylinder -->
+  <path d="M7 16a4 2 0 1 0 0 4 4 2 0 1 0 0-4zm10 0a4 2 0 1 0 0 4 4 2 0 1 0 0-4z" fill="#00aaff" />
+  <path d="M7 16v2.5a4 2 0 1 0 10 0V16" stroke="#66caff" stroke-width="1.5" />
+</svg>

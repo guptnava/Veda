@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background for the icon -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+  <!-- Filter funnel -->
+  <path d="M22 3H2L10 12V21H14V12L22 3Z" fill="#00aaff" />
+  <!-- Gear icon to signify "advanced" -->
+  <circle cx="12" cy="17" r="2.5" fill="#2b2b2b" stroke="#00aaff" stroke-width="1.5" />
+  <path d="M12 14.5v-2m-3.5 1.75l-1.5-1.5m-1.75 3.5h-2m1.75 3.5l1.5 1.5M12 19.5v2m3.5-1.75l1.5 1.5m1.75-3.5h2m-1.75-3.5l-1.5-1.5" stroke="#00aaff" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
