@@ -5,7 +5,7 @@ oracle*/venv/
 # Ignore npm modules
 client/node_modules/
 server/node_modules/
-api/local_all*/
+#api/local_all*/
 
 # Ignore Python cache and logs
 __pycache__/

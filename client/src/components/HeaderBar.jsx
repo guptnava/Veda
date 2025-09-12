@@ -45,6 +45,12 @@ const HeaderBar = ({
   // Server mode toggle
   serverMode,
   setServerMode,
+  tableOpsMode,
+  setTableOpsMode,
+  pushDownDb,
+  setPushDownDb,
+  logEnabled,
+  setLogEnabled,
   heapUsedMB,
   rowsFetchedTotal,
   avgResponseTime,
@@ -63,7 +69,7 @@ const HeaderBar = ({
   const menuRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ right: 0, top: 0 });
   const [trainingUrl, setTrainingUrl] = useState('');
-  const [settingsTab, setSettingsTab] = useState('permissions'); // 'permissions' | 'narration' | 'training'
+  const [settingsTab, setSettingsTab] = useState('permissions'); // 'permissions' | 'narration' | 'training' | 'performance' | 'logging'
 
   useEffect(() => {
     try {
@@ -361,6 +367,7 @@ const HeaderBar = ({
                   ['narration', 'Result Narration'],
                   ['training', 'Training Manager'],
                   ['performance', 'Performance'],
+                  ['logging', 'Logging'],
                 ].map(([key, label]) => (
                   <button
                     key={key}
@@ -448,6 +455,16 @@ const HeaderBar = ({
                     <label style={{ color: '#ccc', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={!!serverMode} onChange={(e) => setServerMode?.(e.target.checked)} />
                       Server Mode (paginate/filter on server)
+                    </label>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: '#ccc', fontSize: '0.9rem' }}>Table ops backend</span>
+                    <select value={tableOpsMode || 'flask'} onChange={(e) => setTableOpsMode?.(e.target.value)} style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6 }}>
+                      <option value="flask">Flask (smart_cache.py)</option>
+                      <option value="node">Node</option>
+                    </select>
+                    <label style={{ color: '#ccc', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={!!pushDownDb} onChange={(e) => setPushDownDb?.(e.target.checked)} /> Push to database
                     </label>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: '0.9rem' }}>
@@ -584,6 +601,19 @@ const HeaderBar = ({
                   <div style={{ color: '#999', fontSize: '0.85rem' }}>These caps keep the UI responsive for very large datasets.</div>
                   {/* unchanged performance controls */}
                   {/* ... */}
+                </div>
+              )}
+
+              {settingsTab === 'logging' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ color: '#ddd', fontWeight: 600 }}>Logging</div>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: '#ccc', fontSize: '0.9rem' }}>
+                    <span>Enable server-side query logging</span>
+                    <input type="checkbox" checked={!!logEnabled} onChange={(e) => setLogEnabled?.(e.target.checked)} />
+                  </label>
+                  <div style={{ color: '#999', fontSize: '0.85rem' }}>
+                    When enabled, the database agent logs intent, SQL, and request metadata to query_log.txt.
+                  </div>
                 </div>
               )}
             </div>

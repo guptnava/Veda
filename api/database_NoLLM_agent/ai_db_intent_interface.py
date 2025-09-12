@@ -41,7 +41,9 @@ def is_safe_sql(sql: str) -> bool:
 
 def log_query(intent, sql, user_agent, client_ip, model):
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    with open("query_log.txt", "a") as f:
+    # Write next to this file so location is predictable regardless of CWD
+    log_path = os.path.join(os.path.dirname(__file__), "query_log.txt")
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(f"\n---\n[{ts}] IP: {client_ip}, UA: {user_agent}, Model: {model}\nIntent: {intent}\nSQL: {sql}\n")
 
 # Predefined intent-to-SQL map
@@ -143,6 +145,8 @@ def query_db():
     data = request.get_json()
     prompt = data.get("prompt")
     model = data.get("model", "llama3.2:1b")  # model param kept for API compatibility, but not used here
+    log_enabled = bool(data.get('logEnabled') or data.get('log_enabled') or False)
+    print("log_enabled flag===========",log_enabled)
     # Optional per-request LOB preview overrides
     try:
         req_max_clob = int(data.get('maxClobPreview') or data.get('max_clob_preview') or 0) or None
@@ -182,7 +186,27 @@ def query_db():
         def generate():
             with engine.connect() as conn:
                 result = conn.execution_options(stream_results=True).execute(text(sql))
-                columns = result.keys()
+                columns = list(result.keys())
+                # Emit metadata for pushdown support
+                first_row = result.fetchone()
+                col_types = {}
+                if first_row is not None:
+                    for col, val in zip(columns, first_row):
+                        if isinstance(val, (datetime.date, datetime.datetime)):
+                            col_types[col] = 'date'
+                        elif isinstance(val, (int, float, decimal.Decimal)):
+                            col_types[col] = 'number'
+                        else:
+                            col_types[col] = 'string'
+                else:
+                    col_types = { c: 'string' for c in columns }
+                yield json.dumps({"_base_sql": sql}) + "\n"
+                yield json.dumps({"_column_types": col_types, "_search_columns": columns}) + "\n"
+                # Yield first row if present
+                if first_row is not None:
+                    row_dict = serialize_row(first_row, columns, max_clob_preview=req_max_clob, max_blob_preview=req_max_blob)
+                    yield json.dumps(row_dict) + "\n"
+                # Continue remaining rows
                 for row in result:
                     row_dict = serialize_row(row, columns, max_clob_preview=req_max_clob, max_blob_preview=req_max_blob)
                     yield json.dumps(row_dict) + "\n"
@@ -196,13 +220,20 @@ def query_db():
         #     all_rows = [dict(zip(res.keys(), row)) for row in res]
 
         #cache.set(cache_key, all_rows, expire=CACHE_EXPIRATION_SECONDS)
-        log_query(intent, sql, user_agent, client_ip, model)
+        # Always log query for audit/debug
+        try:
+            log_query(intent, sql, user_agent, client_ip, model)
+        except Exception:
+            pass
 
         # Return streamed CSV response
         return Response(stream_with_context(generate()), mimetype='application/x-ndjson')
 
     except Exception as e:
-        log_query(intent, str(e), user_agent, client_ip, model)
+        try:
+            log_query(intent, str(e), user_agent, client_ip, model)
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
 @app.route("/health", methods=["GET"])

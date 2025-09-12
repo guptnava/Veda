@@ -334,7 +334,7 @@ const DerivedPicker = ({ baseHeaders, derivedCols, setDerivedCols, useFixed = tr
   );
 };
 
-const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false }) => {
+const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false }) => {
   const [sortConfig, setSortConfig] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleColumns, setVisibleColumns] = useState([]);
@@ -445,6 +445,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const [serverRows, setServerRows] = useState([]);
   const [serverTotal, setServerTotal] = useState(0);
   const [serverLoading, setServerLoading] = useState(false);
+  const [serverCached, setServerCached] = useState(null);
   const [serverAllRows, setServerAllRows] = useState(null);
   const [serverAllLoading, setServerAllLoading] = useState(false);
   
@@ -480,12 +481,14 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   };
   
 
-  if (!data || data.length === 0) {
+  // Choose rows sample for headers depending on server mode
+  const baseRowsForHeaders = (serverMode && Array.isArray(serverRows) && serverRows.length > 0) ? serverRows : data;
+  if (!baseRowsForHeaders || baseRowsForHeaders.length === 0) {
     return <div style={{ color: "#aaa", padding: "10px" }}>No data to display.</div>;
   }
 
-  // Base headers from incoming data
-  const baseHeaders = Object.keys(data[0]);
+  // Base headers from incoming or server rows
+  const baseHeaders = Object.keys(baseRowsForHeaders[0] || {});
 
   // Combine base + derived headers (define early to avoid TDZ on usages)
   const headers = React.useMemo(() => {
@@ -598,6 +601,11 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
             columnFilters: colFilters,
             valueFilters,
             advancedFilters: { rules: advFilters, combine: advCombine },
+            tableOpsMode,
+            pushDownDb,
+            baseSql: exportContext.baseSql,
+            columnTypes: exportContext.columnTypes,
+            searchColumns: headers,
           }),
           signal: ctrl.signal,
         });
@@ -1325,12 +1333,18 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           columnFilters: colFilters,
           valueFilters,
           advancedFilters: { rules: advFilters, combine: advCombine },
+          tableOpsMode,
+          pushDownDb,
+          baseSql: exportContext.baseSql,
+          columnTypes: exportContext.columnTypes,
+          searchColumns: headers,
         };
         const res = await fetch('/api/table/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         setServerRows(Array.isArray(json.rows) ? json.rows : []);
         setServerTotal(Number(json.total) || 0);
+        setServerCached(typeof json.cached === 'boolean' ? json.cached : null);
       } catch (e) {
         if (e.name !== 'AbortError') console.error('serverMode fetch failed', e);
       } finally {
@@ -1364,6 +1378,11 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           columnFilters: colFilters,
           valueFilters,
           advancedFilters: { rules: advFilters, combine: advCombine },
+          tableOpsMode,
+          pushDownDb,
+          baseSql: exportContext.baseSql,
+          columnTypes: exportContext.columnTypes,
+          searchColumns: headers,
         };
         const res = await fetch('/api/table/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1378,6 +1397,45 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     fetchAll();
     return () => ctrl.abort();
   }, [serverMode, chartVisible, exportContext && exportContext.prompt, exportContext && exportContext.mode, exportContext && exportContext.model, JSON.stringify(sortConfig), searchQuery, searchMode, searchCaseSensitive, searchVisibleOnly, JSON.stringify(colFilters), JSON.stringify(valueFilters), JSON.stringify(advFilters), advCombine]);
+
+  // Server mode: when maximizing (virtualized), fetch all rows to honor virtualization over full set
+  useEffect(() => {
+    if (!serverMode || !isVirtualized || isPivotView) return;
+    if (!exportContext || !exportContext.prompt || !exportContext.mode || !exportContext.model) return;
+    if (serverAllRows && Array.isArray(serverAllRows)) return; // already have full set
+    const ctrl = new AbortController();
+    const fetchAllForVirtual = async () => {
+      try {
+        setServerAllLoading(true);
+        const body = {
+          model: exportContext.model,
+          mode: exportContext.mode,
+          prompt: exportContext.prompt,
+          all: true,
+          sort: sortConfig,
+          search: { query: searchQuery, mode: searchMode, caseSensitive: searchCaseSensitive, visibleOnly: searchVisibleOnly },
+          columnFilters: colFilters,
+          valueFilters,
+          advancedFilters: { rules: advFilters, combine: advCombine },
+          tableOpsMode,
+          pushDownDb,
+          baseSql: exportContext.baseSql,
+          columnTypes: exportContext.columnTypes,
+          searchColumns: headers,
+        };
+        const res = await fetch('/api/table/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        setServerAllRows(Array.isArray(json.rows) ? json.rows : []);
+      } catch (e) {
+        if (e.name !== 'AbortError') console.error('serverMode full fetch (virtual) failed', e);
+      } finally {
+        setServerAllLoading(false);
+      }
+    };
+    fetchAllForVirtual();
+    return () => ctrl.abort();
+  }, [serverMode, isVirtualized, isPivotView, exportContext && exportContext.prompt, exportContext && exportContext.mode, exportContext && exportContext.model, JSON.stringify(sortConfig), searchQuery, searchMode, searchCaseSensitive, searchVisibleOnly, JSON.stringify(colFilters), JSON.stringify(valueFilters), JSON.stringify(advFilters), advCombine]);
 
   const renderSortIndicator = (header) => {
     const index = sortConfig.findIndex((c) => c.key === header);
@@ -1856,6 +1914,15 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           disabled={allDisabled || !perm.pivot}
           onClick={(e) => { setShowPivotPicker((p) => !p); setAnchorPivot(getRightAlignedAnchor(e, 560)); }}
         />
+        {/* Pivot Toggle (quick switch) */}
+        <ToolbarButton
+          icon={isPivotView ? ICON_RESTORE : ICON_PIVOT}
+          alt={isPivotView ? 'Normal View' : 'Pivot View'}
+          title={isPivotView ? 'Switch to Normal View' : 'Switch to Pivot View'}
+          active={!!isPivotView}
+          disabled={allDisabled || !perm.pivot}
+          onClick={() => setIsPivotView((v) => !v)}
+        />
         {/* Derived Columns */}
         <ToolbarButton
           icon={ICON_DERIVED}
@@ -2104,7 +2171,11 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                 <strong style={{ color: "#fff", fontSize: "0.95rem" }}>Pivot Options</strong>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button type="button" onClick={() => setShowPivotPicker(false)} style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Close</button>
-                  <button type="button" onClick={() => { setIsPivotView(true); setShowPivotPicker(false); }} style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Switch to Pivot View</button>
+                  {isPivotView ? (
+                    <button type="button" onClick={() => { setIsPivotView(false); setShowPivotPicker(false); }} style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Switch to Normal View</button>
+                  ) : (
+                    <button type="button" onClick={() => { setIsPivotView(true); setShowPivotPicker(false); }} style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Switch to Pivot View</button>
+                  )}
                 </div>
               </div>
               <div style={{ flex: '1 1 auto', overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2198,9 +2269,15 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
               {/* Footer actions sticky */}
               <div style={{ position: 'sticky', bottom: 0, zIndex: 1, background: '#252526', padding: 8, borderTop: '1px solid #333', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <button type="button" onClick={() => setShowPivotPicker(false)} style={{ padding: 8, borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Close</button>
-                <button onClick={() => { setIsPivotView(true); setShowPivotPicker(false); }} style={{ padding: 8, border: "none", borderRadius: 4, background: "#0e639c", color: "white", cursor: "pointer" }}>
-                  Switch to Pivot View
-                </button>
+                {isPivotView ? (
+                  <button onClick={() => { setIsPivotView(false); setShowPivotPicker(false); }} style={{ padding: 8, border: "none", borderRadius: 4, background: "#0e639c", color: "white", cursor: "pointer" }}>
+                    Switch to Normal View
+                  </button>
+                ) : (
+                  <button onClick={() => { setIsPivotView(true); setShowPivotPicker(false); }} style={{ padding: 8, border: "none", borderRadius: 4, background: "#0e639c", color: "white", cursor: "pointer" }}>
+                    Switch to Pivot View
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -2689,7 +2766,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           width: '100%'
         }}>
           {(() => {
-            const rows = sortedData;
+            const rows = serverMode ? ((serverAllRows && Array.isArray(serverAllRows)) ? serverAllRows : (serverRowsWithDerived || [])) : sortedData;
             const rowH = Math.max(18, Math.min(80, Number(virtualRowHeight) || 28));
             const viewportH = Math.max(200, Math.min((typeof window !== 'undefined' ? window.innerHeight - 260 : 600), rows.length * rowH));
             const contentWidth = viewportWidth ? Math.max(viewportWidth, vTotalWidth + indexColWidth) : null;
@@ -2829,6 +2906,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           parts.push(`page ${currentPage}/${totalPages}`);
         }
         if (effectiveTotal > baseCount) parts.push(`loaded ${baseCount} in UI. Use Maximise button to see full dataset`);
+        if (serverMode && serverCached != null) parts.push(serverCached ? 'Cached' : 'Fresh');
         const summary = parts.join(' • ');
 
         // Count active filters/search for clarity

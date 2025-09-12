@@ -35,6 +35,8 @@ const FLASK_RESTFUL_PROMPT_ENG_EMBD_URL = `http://${hostname}:5006`;
 const FLASK_DATABASE_LANGCHAIN_PROMPT_ENG_EMBD_NARRATED_URL = `http://${hostname}:5009`;
 const FLASK_DATABASE_GENERIC_RAG_URL = `http://${hostname}:5010`;
 const FLASK_DATABASE_INTENT_EMBDED_NOMODEL_URL = `http://${hostname}:5011`;
+// Optional: dedicated Flask service for table ops (filter/sort/paginate/cache) if running
+const FLASK_TABLE_OPS_URL = `http://${hostname}:5015`;
 
 const OLLAMA_API_URL = `http://${hostname}:11434`; // Ollama HTTP API URL
 
@@ -410,7 +412,7 @@ app.post('/api/download-csv-query', async (req, res) => {
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            if (obj._narration) continue; // skip narration lines
+            if (obj._narration || obj._base_sql || obj._column_types || obj._search_columns) continue; // skip narration/metadata lines
             if (!headers) {
               headers = Object.keys(obj);
               res.write(headers.map(escape).join(',') + '\n');
@@ -626,7 +628,7 @@ app.post('/api/download-excel-query', async (req, res) => {
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            if (obj._narration) continue;
+            if (!obj || obj._narration || obj._base_sql || obj._column_types || obj._search_columns) continue;
             if (!headers) {
               headers = Object.keys(obj);
               ws.addRow(headers);
@@ -711,7 +713,7 @@ app.post('/api/download-pdf-query', async (req, res) => {
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            if (obj._narration) continue;
+            if (!obj || obj._narration || obj._base_sql || obj._column_types || obj._search_columns) continue;
             if (!headers) {
               headers = Object.keys(obj);
               drawRow(headers, boldFont, 9);
@@ -771,7 +773,7 @@ app.post('/api/download-json-query', async (req, res) => {
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            if (obj._narration) continue;
+            if (obj._narration || obj._base_sql || obj._column_types || obj._search_columns) continue;
             const seg = JSON.stringify(obj);
             if (!first) res.write(',');
             res.write(seg);
@@ -824,6 +826,24 @@ app.post('/api/table/query', async (req, res) => {
     else if (mode === 'database1') flask_endpoint = `${FLASK_DATABASE_INTENT_EMBDED_NOMODEL_URL}/query`;
     else return res.status(400).json({ error: 'Invalid mode' });
 
+    // Respect client preference: tableOpsMode ('flask'|'node')
+    const tableOpsMode = (req.body && req.body.tableOpsMode) || 'flask';
+    if (tableOpsMode === 'flask') {
+      try {
+        const resp = await undiciFetch(`${FLASK_TABLE_OPS_URL}/table/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req.body),
+        });
+        if (resp.ok) {
+          res.setHeader('Content-Type', 'application/json');
+          const text = await resp.text();
+          return res.end(text);
+        }
+      } catch {}
+    }
+
+    // Otherwise, compute in Node with pre-pagination cache
     // Try cache first
     let effective = getCache(cacheKey);
     const fromCache = !!effective;
@@ -854,7 +874,7 @@ app.post('/api/table/query', async (req, res) => {
           for (const line of lines) {
             try {
               const obj = JSON.parse(line);
-              if (obj && !obj._narration) rows.push(obj);
+              if (!obj || obj._narration || obj._base_sql || obj._column_types || obj._search_columns) { } else { rows.push(obj); }
               if (rows.length >= MAX_ROWS) break;
             } catch {}
           }
@@ -862,7 +882,8 @@ app.post('/api/table/query', async (req, res) => {
       }
 
       // Basic global search support (substring)
-      effective = rows;
+      const cleaned = rows.filter(r => { if (!r || typeof r !== 'object') return true; const vals = Object.values(r); if (!vals.length) return true; for (const v of vals) { if (v == null) continue; if (typeof v === 'string' && v.trim() === '') continue; return true; } return false; });
+      effective = cleaned;
       if (search && typeof search.query === 'string' && search.query.length) {
         const q = String(search.query);
         const cs = !!search.caseSensitive;
@@ -951,6 +972,21 @@ app.post('/api/table/distinct', async (req, res) => {
     else if (mode === 'generic_rag') flask_endpoint = `${FLASK_DATABASE_GENERIC_RAG_URL}/query`;
     else if (mode === 'database1') flask_endpoint = `${FLASK_DATABASE_INTENT_EMBDED_NOMODEL_URL}/query`;
     else return res.status(400).json({ error: 'Invalid mode' });
+
+    // Prefer dedicated Flask table-ops if requested
+    const tableOpsModeD = (req.body && req.body.tableOpsMode) || 'flask';
+    if (tableOpsModeD === 'flask') {
+      try {
+        const resp = await undiciFetch(`${FLASK_TABLE_OPS_URL}/table/distinct`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body)
+        });
+        if (resp.ok) {
+          res.setHeader('Content-Type', 'application/json');
+          const text = await resp.text();
+          return res.end(text);
+        }
+      } catch {}
+    }
 
     const controller = new AbortController();
     const flaskRes = await undiciFetch(flask_endpoint, {

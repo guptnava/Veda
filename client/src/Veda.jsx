@@ -89,6 +89,11 @@ export default function App() {
   const [updateIntervalMs, setUpdateIntervalMs] = useState(200);
   const [minRowsPerUpdate, setMinRowsPerUpdate] = useState(100);
   const [serverMode, setServerMode] = useState(false);
+  const [tableOpsMode, setTableOpsMode] = useState('flask'); // 'node' | 'flask'
+  const lastBaseSqlRef = useRef(null);
+  const lastColumnTypesRef = useRef(null);
+  const [pushDownDb, setPushDownDb] = useState(false);
+  const [logEnabled, setLogEnabled] = useState(false);
   const activeAssistantIdRef = useRef(null);
   const [clobPreview, setClobPreview] = useState(8192);
   const [blobPreview, setBlobPreview] = useState(2048);
@@ -130,6 +135,20 @@ export default function App() {
     } catch {}
   }, []);
   useEffect(() => { try { localStorage.setItem('veda.perf.serverMode', String(!!serverMode)); } catch {} }, [serverMode]);
+  // Load/persist table ops routing + pushdown
+  useEffect(() => {
+    try {
+      const m = localStorage.getItem('veda.perf.tableOpsMode');
+      if (m === 'node' || m === 'flask') setTableOpsMode(m);
+      const p = localStorage.getItem('veda.perf.pushDownDb');
+      if (p != null) setPushDownDb(p === 'true');
+      const lg = localStorage.getItem('veda.perf.logEnabled');
+      if (lg != null) setLogEnabled(lg === 'true');
+    } catch {}
+  }, []);
+  useEffect(() => { try { localStorage.setItem('veda.perf.tableOpsMode', tableOpsMode); } catch {} }, [tableOpsMode]);
+  useEffect(() => { try { localStorage.setItem('veda.perf.pushDownDb', String(!!pushDownDb)); } catch {} }, [pushDownDb]);
+  useEffect(() => { try { localStorage.setItem('veda.perf.logEnabled', String(!!logEnabled)); } catch {} }, [logEnabled]);
   useEffect(() => { try { localStorage.setItem('veda.perf.maxClientRows', String(perfMaxClientRows)); } catch {} }, [perfMaxClientRows]);
   useEffect(() => { try { localStorage.setItem('veda.perf.maxScan', String(perfMaxScan)); } catch {} }, [perfMaxScan]);
   useEffect(() => { try { localStorage.setItem('veda.perf.maxDistinct', String(perfMaxDistinct)); } catch {} }, [perfMaxDistinct]);
@@ -221,6 +240,7 @@ export default function App() {
           cosineSimilarityThreshold, cosine_similarity_threshold: cosineSimilarityThreshold,
           maxRows, maxClobPreview: clobPreview, maxBlobPreview: blobPreview,
           sendSqlToLlm, send_sql_to_llm: sendSqlToLlm,
+          logEnabled,
         }),
       });
       if (!res.ok || !res.body) { setLoadingMoreId(null); return; }
@@ -239,7 +259,7 @@ export default function App() {
           if (!line.trim()) continue;
           try {
             const json = JSON.parse(line);
-            if (json._narration) { continue; }
+            if (json._narration || json._base_sql || json._column_types || json._search_columns) { continue; }
             if (Array.isArray(json)) {
               totalRowCount += json.length;
               const remaining = desiredCap - allData.length;
@@ -469,6 +489,12 @@ export default function App() {
 
               if (json._narration) {
                 narrationText = json._narration;
+              } else if (json._base_sql || json._column_types || json._search_columns) {
+                // Capture base SQL and schema metadata for pushdown
+                if (json._base_sql) { lastBaseSqlRef.current = String(json._base_sql); }
+                if (json._column_types && typeof json._column_types === 'object') { lastColumnTypesRef.current = json._column_types; }
+                // stash on the active message too
+                setCurrentStreamingMessage(prev => prev ? { ...prev, baseSql: lastBaseSqlRef.current, columnTypes: lastColumnTypesRef.current, searchColumns: json._search_columns } : prev);
               } else {
                 if (Array.isArray(json)) {
                   totalRowCount += json.length;
@@ -527,7 +553,7 @@ export default function App() {
         const finalData = allData.slice(0);
         const activeId = activeAssistantIdRef.current;
         if (activeId != null) {
-          setMessages(prev => prev.map(m => m.id === activeId ? { ...m, content: cleanStreamText(currentResponseContent), tableData: finalData.length > 0 ? finalData : null, responseTime: elapsed, totalRowCount } : m));
+          setMessages(prev => prev.map(m => m.id === activeId ? { ...m, content: cleanStreamText(currentResponseContent), tableData: finalData.length > 0 ? finalData : null, responseTime: elapsed, totalRowCount, baseSql: lastBaseSqlRef.current, columnTypes: lastColumnTypesRef.current } : m));
           activeAssistantIdRef.current = null;
         }
         if (Array.isArray(tableData) && tableData.length) setRowsFetchedTotal((n) => n + tableData.length);
@@ -656,6 +682,12 @@ export default function App() {
         setVirtRowHeight={setVirtRowHeight}
         serverMode={serverMode}
         setServerMode={setServerMode}
+        tableOpsMode={tableOpsMode}
+        setTableOpsMode={setTableOpsMode}
+        pushDownDb={pushDownDb}
+        setPushDownDb={setPushDownDb}
+        logEnabled={logEnabled}
+        setLogEnabled={setLogEnabled}
         heapUsedMB={heapUsedMB}
         rowsFetchedTotal={rowsFetchedTotal}
         avgResponseTime={avgResponseTime}
@@ -732,9 +764,13 @@ export default function App() {
                           prompt: msg.sourcePrompt || lastQueryContext?.prompt || (typeof window !== 'undefined' && window.__vedaLastQueryContext?.prompt),
                           mode: msg.mode || lastQueryContext?.mode || (typeof window !== 'undefined' && window.__vedaLastQueryContext?.mode),
                           model: msg.model || lastQueryContext?.model || model,
+                          baseSql: msg.baseSql || lastBaseSqlRef.current,
+                          columnTypes: msg.columnTypes || lastColumnTypesRef.current,
                         }}
                         totalRows={msg.totalRowCount}
                         serverMode={serverMode}
+                        tableOpsMode={tableOpsMode}
+                        pushDownDb={pushDownDb}
                       />
                       {/* Summary is shown inside TableComponent footer for accuracy */}
                     </div>
@@ -792,9 +828,11 @@ export default function App() {
                       virtualizeOnMaximize={virtualizeOnMaximize}
                       virtualRowHeight={virtRowHeight}
                       onMaximize={() => { if (virtualizeOnMaximize) refetchFullForMessage(currentStreamingMessage); }}
-                      exportContext={{ prompt: currentStreamingMessage.sourcePrompt || lastQueryContext?.prompt, mode: currentStreamingMessage.mode || lastQueryContext?.mode, model: currentStreamingMessage.model || lastQueryContext?.model }}
+                      exportContext={{ prompt: currentStreamingMessage.sourcePrompt || lastQueryContext?.prompt, mode: currentStreamingMessage.mode || lastQueryContext?.mode, model: currentStreamingMessage.model || lastQueryContext?.model, baseSql: currentStreamingMessage.baseSql || lastBaseSqlRef.current, columnTypes: currentStreamingMessage.columnTypes || lastColumnTypesRef.current }}
                       totalRows={currentStreamingMessage.totalRowCount}
                       serverMode={serverMode}
+                      tableOpsMode={tableOpsMode}
+                      pushDownDb={pushDownDb}
                     />
                     {/* Summary is shown inside TableComponent footer for accuracy */}
                 </div>

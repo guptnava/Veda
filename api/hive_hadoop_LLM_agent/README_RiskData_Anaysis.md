@@ -18,7 +18,7 @@ export KERBEROS_PRINCIPAL=your_principal@YOUR.REALM
 Make sure you have a valid Kerberos ticket:
 kinit -kt $KERBEROS_KEYTAB $KERBEROS_PRINCIPAL
 Run the Flask app:
-python app.py
+python smart_cache.py
 Example POST request to test:
 curl -X POST http://localhost:5001/api/agent/data-qa \
  -H "Content-Type: application/json" \
