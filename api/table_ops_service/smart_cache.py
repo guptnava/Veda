@@ -421,6 +421,119 @@ def table_distinct():
     return jsonify({ 'distinct': values, 'column': column, 'count': len(values) })
 
 
+# ---------------- Save view to Oracle -----------------
+
+def _ensure_views_table(conn):
+    """Create the VEDA_SAVED_VIEWS table if it doesn't exist."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name FROM user_tables WHERE table_name = 'VEDA_SAVED_VIEWS'
+        """)
+        row = cur.fetchone()
+        if not row:
+            cur.execute("""
+                CREATE TABLE VEDA_SAVED_VIEWS (
+                  VIEW_NAME    VARCHAR2(200),
+                  DATASET_SIG  VARCHAR2(4000),
+                  OWNER_NAME   VARCHAR2(200),
+                  CREATED_AT   TIMESTAMP DEFAULT SYSTIMESTAMP,
+                  CONTENT      CLOB
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Ensure views table failed: {e}")
+
+
+@app.post('/table/save_view')
+def table_save_view():
+    body = request.get_json(force=True) or {}
+    view_name = body.get('viewName')
+    content = body.get('viewState') or {}
+    dataset_sig = body.get('datasetSig') or ''
+    owner = body.get('owner') or ''
+    if not view_name:
+        return jsonify({ 'error': 'viewName required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_views_table(conn)
+        cur = conn.cursor()
+        # Upsert: try update first, then insert if not exists
+        cur.setinputsizes(content=oracledb.CLOB)
+        cur.execute(
+            "UPDATE VEDA_SAVED_VIEWS SET CONTENT = :content, CREATED_AT = SYSTIMESTAMP WHERE VIEW_NAME = :name AND NVL(OWNER_NAME,'') = NVL(:owner,'') AND NVL(DATASET_SIG,'') = NVL(:sig,'')",
+            name=view_name, sig=dataset_sig, owner=owner, content=stable_stringify(content)
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                "INSERT INTO VEDA_SAVED_VIEWS (VIEW_NAME, DATASET_SIG, OWNER_NAME, CONTENT) VALUES (:name, :sig, :owner, :content)",
+                name=view_name, sig=dataset_sig, owner=owner, content=stable_stringify(content)
+            )
+        conn.commit()
+        return jsonify({ 'ok': True, 'viewName': view_name })
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({ 'error': f'Oracle insert failed: {e}' }), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get('/table/saved_views')
+def table_saved_views():
+    dataset_sig = request.args.get('datasetSig')
+    owner = request.args.get('owner')
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_views_table(conn)
+        cur = conn.cursor()
+        sql = "SELECT VIEW_NAME, DATASET_SIG, NVL(OWNER_NAME,''), CREATED_AT, CONTENT FROM VEDA_SAVED_VIEWS WHERE 1=1"
+        binds = {}
+        if dataset_sig:
+            sql += " AND NVL(DATASET_SIG,'') = NVL(:sig,'')"; binds['sig'] = dataset_sig
+        if owner is not None and owner != '':
+            sql += " AND NVL(OWNER_NAME,'') = NVL(:owner,'')"; binds['owner'] = owner
+        sql += " ORDER BY CREATED_AT DESC"
+        cur.execute(sql, **binds)
+        rows = []
+        for view_name, sig, owner_name, created_at, content in cur.fetchall():
+            # CONTENT may be a LOB; fetch as string and try parse JSON
+            try:
+                if hasattr(content, 'read'):
+                    content_str = content.read()
+                else:
+                    content_str = content
+                parsed = json.loads(content_str) if content_str else {}
+            except Exception:
+                parsed = {}
+            rows.append({
+                'viewName': view_name,
+                'datasetSig': sig,
+                'ownerName': owner_name,
+                'createdAt': str(created_at),
+                'content': parsed,
+            })
+        return jsonify({ 'views': rows })
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 # ---------------- Oracle pushdown adapters -----------------
 
 def _oracle_connect():

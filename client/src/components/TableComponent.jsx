@@ -15,6 +15,9 @@ import IconTop from '../icons/top.svg';
 import IconBottom from '../icons/bottom.svg';
 import IconMaximize from '../icons/maximize.svg';
 import IconRestore from '../icons/restore.svg';
+import IconSave from '../icons/save.svg';
+import IconLoad from '../icons/load.svg';
+// Fallback save icon (using existing format icon if no save asset)
 
 
 
@@ -34,6 +37,8 @@ const ICON_TOP = IconTop;
 const ICON_BOTTOM = IconBottom
 const ICON_MAXIMIZE = IconMaximize;
 const ICON_RESTORE = IconRestore;
+const ICON_SAVE = IconSave;
+const ICON_LOAD = IconLoad;
 
 // Generic toolbar icon button
 const ToolbarButton = ({ icon, alt, title, onClick, active, disabled }) => (
@@ -352,6 +357,8 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const [isPivotView, setIsPivotView] = useState(false);
   const [pivotConfig, setPivotConfig] = useState({
     columns: [],
+    // Column axis (not yet rendered as matrix, stored for future use)
+    colAxis: [],
     aggColumn: "", // legacy single measure
     aggFunc: "sum", // legacy single func
     measures: [], // multi-measure support
@@ -360,7 +367,30 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     calcPctParent: false,
     calcRank: false,
     calcRunning: false,
+    // Sorting among sibling groups by selected measure
+    sortMeasure: null, // e.g., "Revenue (sum)"
+    sortDir: 'desc',
+    // Subtotal/Grand options
+    showSubtotals: true,
+    showGrand: true,
+    subtotalPosition: 'above', // 'below' | 'above' — Excel shows parent above children
+    // Row labels mode: separate columns (Excel default) or single combined column
+    rowLabelsMode: 'separate', // 'separate' | 'single'
+    // Top-N within groups
+    topN: { enabled: false, level: 0, n: 10, measure: null, dir: 'desc' },
+    // Percent-of directions
+    percentRow: false,
+    percentCol: false,
+    // Time intelligence (scaffold; requires a time-grain column on column axis)
+    timeIntel: { enabled: false, field: null, funcs: [] },
   });
+  // Collapsed groups in pivot (persisted)
+  const [pivotCollapsed, setPivotCollapsed] = useState(() => new Set());
+  // Calculated measures (user-defined expressions on computed measures)
+  const [pivotCalcMeasures, setPivotCalcMeasures] = useState([]); // [{id,name,formula,enabled}]
+  const [pivotCalcDraft, setPivotCalcDraft] = useState({ name: '', formula: '' });
+  // Simple numeric binning (equal width) and date grains
+  const [pivotBins, setPivotBins] = useState({}); // { [col]: { type:'equal', bins:number } | { type:'time', grain:'year'|'quarter'|'month'|'week'|'day' } }
 
   const pickerRef = useRef(null);
   const pivotRef = useRef(null);
@@ -440,6 +470,57 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const [freezeCount, setFreezeCount] = useState(0);
   const resizeStateRef = useRef({ active: false, col: null, startX: 0, startW: 0 });
   const [colFormats, setColFormats] = useState({}); // { [col]: { type: 'default|number|thousands|percent|currency|date|datetime', currency?: 'USD', precision?: 0-4 } }
+  // Inline sparkline option for pivot with column-axis
+  const [pivotSparkline, setPivotSparkline] = useState(true);
+  // Selection model
+  const [selectedColumns, setSelectedColumns] = useState(new Set()); // Set<string>
+  const [selectedValuesByCol, setSelectedValuesByCol] = useState({}); // { [col]: Set<string> }
+  const [selectedRowIdx, setSelectedRowIdx] = useState(new Set()); // Set<number> (non-pivot virtual index)
+  const clearSelection = () => { setSelectedColumns(new Set()); setSelectedValuesByCol({}); setSelectedRowIdx(new Set()); };
+
+  // History (undo/redo) for filters/sort/pivot changes
+  const historyRef = useRef({ stack: [], index: -1, guard: false, lastSig: '' });
+  const takeSnapshot = () => ({
+    sortConfig,
+    colFilters,
+    valueFilters,
+    advFilters,
+    advCombine,
+    pivotConfig,
+  });
+  useEffect(() => {
+    try {
+      if (historyRef.current.guard) return;
+      const snap = takeSnapshot();
+      const sig = JSON.stringify(snap);
+      if (sig === historyRef.current.lastSig) return;
+      historyRef.current.lastSig = sig;
+      const stack = historyRef.current.stack.slice(0, historyRef.current.index + 1);
+      stack.push(snap);
+      historyRef.current.stack = stack.slice(-50); // cap
+      historyRef.current.index = historyRef.current.stack.length - 1;
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(sortConfig), JSON.stringify(colFilters), JSON.stringify(valueFilters), JSON.stringify(advFilters), advCombine, JSON.stringify(pivotConfig)]);
+  const applySnapshot = (snap) => {
+    historyRef.current.guard = true;
+    try {
+      setSortConfig(snap.sortConfig || []);
+      setColFilters(snap.colFilters || {});
+      setValueFilters(snap.valueFilters || {});
+      setAdvFilters(snap.advFilters || []);
+      setAdvCombine(snap.advCombine || 'AND');
+      setPivotConfig((prev) => ({ ...prev, ...(snap.pivotConfig || {}) }));
+    } finally {
+      setTimeout(() => { historyRef.current.guard = false; }, 0);
+    }
+  };
+  const undo = () => {
+    const h = historyRef.current; if (h.index <= 0) return; h.index -= 1; const snap = h.stack[h.index]; applySnapshot(snap);
+  };
+  const redo = () => {
+    const h = historyRef.current; if (h.index >= h.stack.length - 1) return; h.index += 1; const snap = h.stack[h.index]; applySnapshot(snap);
+  };
 
   // Server mode data state (minimal integration)
   const [serverRows, setServerRows] = useState([]);
@@ -490,11 +571,19 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   // Base headers from incoming or server rows
   const baseHeaders = Object.keys(baseRowsForHeaders[0] || {});
 
-  // Combine base + derived headers (define early to avoid TDZ on usages)
+  // Helper: bucket/grain header names from config
+  const bucketHeaderFor = (col, cfg) => {
+    if (!cfg) return null;
+    if (cfg.type === 'equal') return `${col} (bins:${cfg.bins || 5})`;
+    if (cfg.type === 'time') return `${col} (${cfg.grain || 'month'})`;
+    return null;
+  };
+  // Combine base + derived + bucket headers (define early to avoid TDZ on usages)
   const headers = React.useMemo(() => {
     const extra = derivedCols.filter(c => c.enabled !== false && c.name).map(c => c.name);
-    return [...baseHeaders, ...extra];
-  }, [baseHeaders, derivedCols]);
+    const bucketExtras = Object.entries(pivotBins || {}).map(([col, cfg]) => bucketHeaderFor(col, cfg)).filter(Boolean);
+    return [...baseHeaders, ...extra, ...bucketExtras];
+  }, [baseHeaders, derivedCols, JSON.stringify(pivotBins)]);
 
   useEffect(() => {
     // Try restore visible columns; default to all columns
@@ -850,13 +939,18 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   // Ensure columnOrder always contains current headers (in base order first time)
   useEffect(() => {
     setColumnOrder((prev) => {
-      if (!prev || prev.length === 0) return [...headers];
-      const set = new Set(prev);
-      const merged = [...prev, ...headers.filter(h => !set.has(h))];
-      // also drop removed
-      return merged.filter(h => headers.includes(h));
+      const ensure = (p) => {
+        const base = p && p.length ? p : headers;
+        const set = new Set(base);
+        const added = headers.filter(h => !set.has(h));
+        const merged = [...base, ...added].filter(h => headers.includes(h));
+        // shallow equality check
+        if (p && p.length === merged.length && p.every((v,i) => v === merged[i])) return p;
+        return merged.slice();
+      };
+      return ensure(prev);
     });
-  }, [headers]);
+  }, [headers.join(',')]);
 
   // Columns to display in non-pivot view in the chosen order
   const displayColumns = React.useMemo(() => {
@@ -1085,12 +1179,76 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   // Server-mode rows with derived columns for display
   const serverRowsWithDerived = React.useMemo(() => applyDerivedToRows(serverRows), [serverRows, applyDerivedToRows]);
 
+  // Apply numeric bins and time grains to rows (adds derived grouping columns used mainly for pivot)
+  const applyBucketsToRows = React.useCallback((rows) => {
+    if (!rows || !Array.isArray(rows) || rows.length === 0) return rows;
+    const cfgs = pivotBins || {};
+    const keys = Object.keys(cfgs);
+    if (!keys.length) return rows;
+    // Precompute stats for equal bins
+    const stats = {};
+    for (const col of keys) {
+      const cfg = cfgs[col];
+      if (cfg && cfg.type === 'equal') {
+        const nums = rows.map(r => Number(r[col])).filter(v => isFinite(v));
+        if (nums.length) {
+          let min = nums[0], max = nums[0];
+          for (const n of nums) { if (n < min) min = n; if (n > max) max = n; }
+          stats[col] = { min, max };
+        }
+      }
+    }
+    const toWeek = (d) => {
+      const t = new Date(d);
+      const onejan = new Date(t.getFullYear(),0,1);
+      const millis = (t - onejan) + ((onejan.getTimezoneOffset()-t.getTimezoneOffset())*60000);
+      const day = Math.floor(millis / 86400000) + 1;
+      return Math.ceil(day/7);
+    };
+    return rows.map(r => {
+      const out = { ...r };
+      for (const col of keys) {
+        const cfg = cfgs[col];
+        const bHeader = bucketHeaderFor(col, cfg);
+        if (!bHeader) continue;
+        if (cfg.type === 'equal') {
+          const s = stats[col];
+          const n = Number(r[col]);
+          const bins = Math.max(1, Number(cfg.bins)||5);
+          if (!s || !isFinite(n)) { out[bHeader] = ''; continue; }
+          const range = s.max - s.min || 1;
+          let idx = Math.floor(((n - s.min) / range) * bins);
+          if (idx >= bins) idx = bins - 1;
+          const start = s.min + (range / bins) * idx;
+          const end = s.min + (range / bins) * (idx + 1);
+          out[bHeader] = `[${Number(start.toFixed(2))} – ${Number(end.toFixed(2))})`;
+        } else if (cfg.type === 'time') {
+          const v = r[col];
+          const d = isValidDate(v) ? new Date(v) : null;
+          if (!d) { out[bHeader] = ''; continue; }
+          switch (cfg.grain) {
+            case 'year': out[bHeader] = String(d.getFullYear()); break;
+            case 'quarter': out[bHeader] = `Q${Math.floor(d.getMonth()/3)+1} ${d.getFullYear()}`; break;
+            case 'month': out[bHeader] = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; break;
+            case 'week': out[bHeader] = `${d.getFullYear()}-W${String(toWeek(d)).padStart(2,'0')}`; break;
+            case 'day': default: out[bHeader] = d.toISOString().slice(0,10);
+          }
+        }
+      }
+      return out;
+    });
+  }, [JSON.stringify(pivotBins)]);
+
+  const withDerivedAndBuckets = React.useMemo(() => applyBucketsToRows(withDerived), [withDerived, applyBucketsToRows]);
+  const serverRowsWithDerivedAndBuckets = React.useMemo(() => applyBucketsToRows(serverRowsWithDerived), [serverRowsWithDerived, applyBucketsToRows]);
+
   // Drill helpers: open side panel with matching underlying rows
+  const [drillContext, setDrillContext] = useState(null); // { column?, value?, groupKey? }
   const openDrillForCell = React.useCallback((opts) => {
     try {
       const { column, value, groupKey } = opts || {};
       // Base dataset with derived values so drilling on derived columns works, too
-      const rows = withDerived;
+      const rows = withDerivedAndBuckets;
       const match = (r) => {
         // Apply group key match if provided (pivot)
         if (groupKey && typeof groupKey === 'object') {
@@ -1105,11 +1263,12 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
       };
       const out = rows.filter(match);
       setDrillRows(out);
+      setDrillContext({ column, value, groupKey: groupKey || null });
       setShowDrill(true);
     } catch (e) {
       console.error('Drill open failed', e);
     }
-  }, [withDerived]);
+  }, [withDerivedAndBuckets]);
 
   // apply sorting
   const sortedData = React.useMemo(() => {
@@ -1153,7 +1312,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const numericCols = React.useMemo(() => {
     // Heuristic: column is numeric if sampled values are numeric
     const set = new Set();
-    const sample = (isPivotView ? sortedData : withDerived).slice(0, 50);
+    const sample = (isPivotView ? sortedData : withDerivedAndBuckets).slice(0, 50);
     headers.forEach((h) => {
       const vals = sample.map(r => r[h]).filter(v => v !== undefined && v !== null && v !== "");
       if (vals.length && vals.every(v => typeof v === 'number' || (!isNaN(Number(v)) && isFinite(Number(v))))) {
@@ -1171,7 +1330,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     const t0 = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
     // Choose base rows: server full/all rows (preferred), else server page, else client withDerived
-    const baseRows = serverMode ? (Array.isArray(serverAllRows) && serverAllRows.length ? serverAllRows : serverRowsWithDerived) : withDerived;
+    const baseRows = serverMode ? (Array.isArray(serverAllRows) && serverAllRows.length ? serverAllRows : serverRowsWithDerivedAndBuckets) : withDerivedAndBuckets;
 
     const measures = (pivotConfig.measures && pivotConfig.measures.length)
       ? pivotConfig.measures
@@ -1183,6 +1342,8 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
     const labels = [];
     for (const m of measures) for (const f of funcs) labels.push(`${m} (${f})`);
+    // Calculated measures: append their names
+    const calcLabels = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
 
     const grandCollect = Object.fromEntries(labels.map(l => [l, []]));
     const rows = [];
@@ -1212,11 +1373,39 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           }
         }
       }
+      // Calculated measures: eval expressions with 'm' = out, 'Math'
+      for (const cm of (pivotCalcMeasures || [])) {
+        if (!cm || cm.enabled === false || !cm.name) continue;
+        const key = String(cm.formula || '').trim();
+        try {
+          // eslint-disable-next-line no-new-func
+          const fn = new Function('m','Math', '"use strict"; return ( ' + (key || 'null') + ' );');
+          const v = fn(out, Math);
+          out[cm.name] = v;
+        } catch { out[cm.name] = null; }
+      }
       return out;
     };
 
     // Precompute grand totals per label for % of total
     const grandTotals = computeAggs(baseRows);
+
+    // If column axis specified, produce cross-tab columns per column key
+    const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+    let colKeyLabels = [];
+    let colKeyToRows = new Map();
+    if (colAxis.length > 0) {
+      for (const r of baseRows) {
+        const keyObj = Object.fromEntries(colAxis.map(c => [c, String(r[c] ?? '')]));
+        const label = colAxis.map(c => `${c}: ${keyObj[c]}`).join(' | ');
+        const k = JSON.stringify(keyObj);
+        if (!colKeyToRows.has(k)) colKeyToRows.set(k, { label, rows: [] });
+        colKeyToRows.get(k).rows.push(r);
+      }
+      colKeyLabels = Array.from(colKeyToRows.values()).map(v => v.label);
+      colKeyLabels.sort((a,b) => a.localeCompare(b));
+      if (pivotConfig.showGrand !== false) colKeyLabels.push('Grand Total');
+    }
 
     const buildGroups = (arr, level, prefix = {}, parentTotals = null) => {
       const col = pivotConfig.columns[level];
@@ -1227,79 +1416,322 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
         grouped.get(key).push(r);
       }
 
-      // Build rows for each key at this level
-      const siblingRows = [];
+      // Build per-key items (subtotal + children) first
+      const items = [];
       for (const [key, groupRows] of grouped) {
         const nextPrefix = { ...prefix, [col]: key };
-        if (level < pivotConfig.columns.length - 1) {
-          buildGroups(groupRows, level + 1, nextPrefix, computeAggs(arr));
-        }
         // Collect values for grand totals collector
         for (const m of measures) grandCollect[`${m} (sum)`]?.push(...groupRows.map(g => g[m]));
 
-        const subtotalRow = Object.fromEntries(
-          pivotConfig.columns.map((c, i) => {
-            if (i <= level) return [c, nextPrefix[c] ?? ""];
-            return [c, ""];
-          })
-        );
-        const aggs = computeAggs(groupRows);
-        for (const l of labels) subtotalRow[l] = aggs[l];
+        const subtotalRow = (() => {
+          const obj = {};
+          if (pivotConfig.rowLabelsMode === 'single') {
+            const label = (nextPrefix[col] ?? '');
+            obj['__row_label__'] = label;
+            obj['Row Labels'] = label; // convenience for render paths
+            // keep actual row-fields empty so they don't render in separate mode columns
+            pivotConfig.columns.forEach((c) => { obj[c] = ''; });
+          } else {
+            pivotConfig.columns.forEach((c, i) => {
+              obj[c] = (i === level) ? (nextPrefix[c] ?? "") : "";
+            });
+          }
+          return obj;
+        })();
+        if (colAxis.length === 0) {
+          const aggs = computeAggs(groupRows);
+          for (const l of labels) subtotalRow[l] = aggs[l];
+          for (const cl of calcLabels) subtotalRow[cl] = aggs[cl];
+          if (pivotConfig.calcPctTotal) {
+            for (const l of labels) {
+              const denom = Number(grandTotals[l]);
+              const num = Number(subtotalRow[l]);
+              subtotalRow[`${l} (% total)`] = denom ? num / denom : 0;
+            }
+          }
+          if (pivotConfig.calcPctParent && parentTotals) {
+            for (const l of labels) {
+              const denom = Number(parentTotals[l]);
+              const num = Number(subtotalRow[l]);
+              subtotalRow[`${l} (% parent)`] = denom ? num / denom : 0;
+            }
+          }
+        } else {
+          // Cross-tab: compute each column key
+          const rowTotals = {};
+          const colTotals = {};
+          const byColLabelAgg = (label) => {
+            if (label === 'Grand Total') return computeAggs(groupRows);
+            // reconstruct keyObj from label
+            // we built label as "col: val | col2: val2"; match rows that have same values
+            const parts = label.split(' | ').map(s => s.split(': '));
+            const match = (r) => parts.every(([c, v]) => String(r[c] ?? '') === v);
+            const rowsForKey = groupRows.filter(match);
+            return computeAggs(rowsForKey);
+          };
+          const ti = pivotConfig.timeIntel || {};
+          const tiActive = !!ti.enabled && Array.isArray(ti.funcs) && ti.funcs.length && colAxis.length === 1 && (!ti.field || ti.field === colAxis[0]);
+          const parseTimeVal = (label) => {
+            try {
+              const right = (label.split(': ').slice(1).join(': ') || '').trim();
+              // 'YYYY', 'YYYY-MM', 'YYYY-MM-DD'
+              if (/^\d{4}$/.test(right)) return { type: 'year', year: Number(right), key: right };
+              if (/^\d{4}-\d{2}$/.test(right)) {
+                const [y,m] = right.split('-').map(Number);
+                return { type: 'month', year: y, month: m, key: right };
+              }
+              if (/^\d{4}-\d{2}-\d{2}$/.test(right)) {
+                const [y,m,d] = right.split('-').map(Number);
+                return { type: 'day', year: y, month: m, day: d, key: right };
+              }
+              const mq = right.match(/^Q(\d) (\d{4})$/);
+              if (mq) return { type: 'quarter', quarter: Number(mq[1]), year: Number(mq[2]), key: right };
+              const mw = right.match(/^(\d{4})-W(\d{2})$/);
+              if (mw) return { type: 'week', week: Number(mw[2]), year: Number(mw[1]), key: right };
+              return { type: 'unknown', key: right };
+            } catch { return { type: 'unknown' }; }
+          };
+          const timeInfo = colKeyLabels.map(lbl => ({ lbl, t: parseTimeVal(lbl) }));
+          if (tiActive) {
+            // Sort time-aware if possible
+            const orderVal = (t) => {
+              if (!t) return Number.MAX_SAFE_INTEGER;
+              switch (t.type) {
+                case 'year': return t.year;
+                case 'quarter': return t.year*10 + t.quarter;
+                case 'month': return t.year*100 + t.month;
+                case 'week': return t.year*100 + t.week;
+                case 'day': return (new Date(`${t.year}-${String(t.month||1).padStart(2,'0')}-${String(t.day||1).padStart(2,'0')}`).getTime()/86400000);
+                default: return Number.MAX_SAFE_INTEGER;
+              }
+            };
+            timeInfo.sort((a,b) => orderVal(a.t) - orderVal(b.t));
+            colKeyLabels = timeInfo.map(x => x.lbl);
+          }
+          for (const colLabel of colKeyLabels) {
+            const aggs = byColLabelAgg(colLabel);
+            for (const l of labels) {
+              const keyName = `${colLabel} | ${l}`;
+              subtotalRow[keyName] = aggs[l];
+              rowTotals[l] = (rowTotals[l] || 0) + (Number(aggs[l])||0);
+              colTotals[keyName] = (colTotals[keyName] || 0) + (Number(aggs[l])||0);
+            }
+            for (const cl of calcLabels) {
+              const keyName = `${colLabel} | ${cl}`;
+              subtotalRow[keyName] = aggs[cl];
+            }
+          }
+          // Time intelligence columns
+          if (tiActive && (ti.funcs||[]).length) {
+            const idxByKey = new Map(colKeyLabels.map((lbl,i) => [lbl, i]));
+            const infoByLbl = new Map(timeInfo.map(x => [x.lbl, x.t]));
+            const sameMonthPrevYearLbl = (lbl) => {
+              const t = infoByLbl.get(lbl);
+              if (!t || (t.type !== 'month' && t.type !== 'year' && t.type !== 'day')) return null;
+              if (t.type === 'year') {
+                const target = `${t.year-1}`;
+                const match = colKeyLabels.find(x => (parseTimeVal(x).key === target));
+                return match || null;
+              }
+              if (t.type === 'month') {
+                const target = `${t.year-1}-${String(t.month).padStart(2,'0')}`;
+                const match = colKeyLabels.find(x => (parseTimeVal(x).key === target));
+                return match || null;
+              }
+              if (t.type === 'day') {
+                // naive: compare same day prev month
+                let y = t.year, m = t.month-1, d = t.day;
+                if (m <= 0) { m = 12; y--; }
+                const target = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const match = colKeyLabels.find(x => (parseTimeVal(x).key === target));
+                return match || null;
+              }
+              return null;
+            };
+            for (let i = 0; i < colKeyLabels.length; i++) {
+              const lbl = colKeyLabels[i];
+              const prevLbl = i > 0 ? colKeyLabels[i-1] : null;
+              const yoyLbl = sameMonthPrevYearLbl(lbl);
+              for (const l of labels) {
+                const baseKey = `${lbl} | ${l}`;
+                const baseVal = Number(subtotalRow[baseKey]) || 0;
+                if (ti.funcs.includes('MoM') && prevLbl) {
+                  const prevVal = Number(subtotalRow[`${prevLbl} | ${l}`]) || 0;
+                  subtotalRow[`${baseKey} (MoM%)`] = prevVal ? (baseVal - prevVal) / prevVal : 0;
+                }
+                if (ti.funcs.includes('YoY') && yoyLbl) {
+                  const prevVal = Number(subtotalRow[`${yoyLbl} | ${l}`]) || 0;
+                  subtotalRow[`${baseKey} (YoY%)`] = prevVal ? (baseVal - prevVal) / prevVal : 0;
+                }
+                if (ti.funcs.includes('YTD')) {
+                  // accumulate since beginning of same year for month/day; for year use itself
+                  const t = infoByLbl.get(lbl);
+                  if (t && (t.type === 'month' || t.type === 'day')) {
+                    let acc = 0;
+                    for (let j = 0; j <= i; j++) {
+                      const tj = infoByLbl.get(colKeyLabels[j]);
+                      if (!tj) continue;
+                      if (tj.type === t.type && tj.year === t.year && (t.type !== 'month' || tj.month <= t.month) && (t.type !== 'day' || (tj.month < t.month || (tj.month === t.month && tj.day <= t.day)))) {
+                        acc += Number(subtotalRow[`${colKeyLabels[j]} | ${l}`]) || 0;
+                      }
+                    }
+                    subtotalRow[`${baseKey} (YTD)`] = acc;
+                  } else if (t && t.type === 'year') {
+                    subtotalRow[`${baseKey} (YTD)`] = baseVal;
+                  }
+                }
+                if (ti.funcs.includes('MTD')) {
+                  const t = infoByLbl.get(lbl);
+                  if (t && t.type === 'day') {
+                    let acc = 0;
+                    for (let j = 0; j <= i; j++) {
+                      const tj = infoByLbl.get(colKeyLabels[j]);
+                      if (tj && tj.type === 'day' && tj.year === t.year && tj.month === t.month && tj.day <= t.day) {
+                        acc += Number(subtotalRow[`${colKeyLabels[j]} | ${l}`]) || 0;
+                      }
+                    }
+                    subtotalRow[`${baseKey} (MTD)`] = acc;
+                  }
+                }
+              }
+            }
+          }
+          // Percent of row/column if enabled
+          if (pivotConfig.percentRow) {
+            for (const colLabel of colKeyLabels) for (const l of labels) {
+              const keyName = `${colLabel} | ${l}`;
+              const denom = rowTotals[l] || 0;
+              const num = Number(subtotalRow[keyName]) || 0;
+              subtotalRow[`${keyName} (% row)`] = denom ? num / denom : 0;
+            }
+          }
+          if (pivotConfig.percentCol) {
+            // compute totals for each column across rows later; here we leave value as-is; will be meaningful when exporting or viewing totals
+          }
+        }
 
         // Calculated: % of total / parent
-        if (pivotConfig.calcPctTotal) {
-          for (const l of labels) {
-            const denom = Number(grandTotals[l]);
-            const num = Number(subtotalRow[l]);
-            subtotalRow[`${l} (% total)`] = denom ? num / denom : 0;
-          }
-        }
-        if (pivotConfig.calcPctParent && parentTotals) {
-          for (const l of labels) {
-            const denom = Number(parentTotals[l]);
-            const num = Number(subtotalRow[l]);
-            subtotalRow[`${l} (% parent)`] = denom ? num / denom : 0;
-          }
-        }
-
         subtotalRow._isSubtotal = true;
         subtotalRow._level = level;
         subtotalRow._groupKey = nextPrefix;
-        siblingRows.push(subtotalRow);
+        items.push({ key, subtotalRow, groupRows });
       }
 
-      // Rank and running on first label among siblings
+      // Sort siblings by configured measure
+      const primary = pivotConfig.sortMeasure || labels[0];
+      if (primary) {
+        const dir = (pivotConfig.sortDir === 'asc') ? 1 : -1;
+        items.sort((a, b) => (Number(a.subtotalRow[primary])||0) < (Number(b.subtotalRow[primary])||0) ? dir*-1 : (Number(a.subtotalRow[primary])||0) > (Number(b.subtotalRow[primary])||0) ? dir*1 : 0);
+      }
+      // Top-N within this level
+      if (pivotConfig.topN && pivotConfig.topN.enabled && level === (pivotConfig.topN.level || 0)) {
+        const by = pivotConfig.topN.measure || primary || labels[0];
+        const dir = (pivotConfig.topN.dir === 'asc') ? 1 : -1;
+        const n = Math.max(1, Math.min(100, Number(pivotConfig.topN.n)||10));
+        items.sort((a,b) => (Number(a.subtotalRow[by])||0) < (Number(b.subtotalRow[by])||0) ? dir*-1 : (Number(a.subtotalRow[by])||0) > (Number(b.subtotalRow[by])||0) ? dir*1 : 0);
+        items.splice(n);
+      }
+      // Rank and running on first/selected label among siblings
       if (pivotConfig.calcRank || pivotConfig.calcRunning) {
-        const primary = labels[0];
-        const sorted = [...siblingRows].sort((a, b) => Number(b[primary]||0) - Number(a[primary]||0));
-        if (pivotConfig.calcRank) {
-          sorted.forEach((row, idx) => { row[`${primary} (Rank)`] = idx + 1; });
-        }
+        const rankLabel = primary || labels[0];
+        if (pivotConfig.calcRank) items.forEach((it, idx) => { it.subtotalRow[`${rankLabel} (Rank)`] = idx + 1; });
         if (pivotConfig.calcRunning) {
           let acc = 0;
-          sorted.forEach((row) => { const v = Number(row[primary]) || 0; acc += v; row[`${primary} (Running)`] = acc; });
+          items.forEach((it) => { const v = Number(it.subtotalRow[rankLabel]) || 0; acc += v; it.subtotalRow[`${rankLabel} (Running)`] = acc; });
         }
       }
-
-      rows.push(...siblingRows);
+      // Emit rows in correct order (parent above/below children)
+      for (const it of items) {
+        if (pivotConfig.subtotalPosition === 'above' && level < pivotConfig.columns.length - 1) {
+          rows.push(it.subtotalRow);
+          buildGroups(it.groupRows, level + 1, { ...prefix, [col]: it.key }, computeAggs(arr));
+        } else {
+          if (level < pivotConfig.columns.length - 1) buildGroups(it.groupRows, level + 1, { ...prefix, [col]: it.key }, computeAggs(arr));
+          rows.push(it.subtotalRow);
+        }
+      }
     };
 
     buildGroups(baseRows, 0, {}, null);
 
-    if (rows.length > 0) {
+    if (rows.length > 0 && pivotConfig.showGrand !== false) {
       const grand = {};
-      pivotConfig.columns.forEach((c, i) => (grand[c] = i === 0 ? "Grand Total" : ""));
-      for (const l of labels) grand[l] = grandTotals[l];
-      if (pivotConfig.calcPctTotal) for (const l of labels) grand[`${l} (% total)`] = 1;
+      if (pivotConfig.rowLabelsMode === 'single') {
+        grand['__row_label__'] = 'Grand Total';
+        grand['Row Labels'] = 'Grand Total';
+        pivotConfig.columns.forEach((c) => (grand[c] = ''));
+      } else {
+        pivotConfig.columns.forEach((c, i) => (grand[c] = i === 0 ? "Grand Total" : ""));
+      }
+      if (colAxis.length === 0) {
+        for (const l of labels) grand[l] = grandTotals[l];
+        for (const cl of calcLabels) grand[cl] = grandTotals[cl] ?? null;
+        if (pivotConfig.calcPctTotal) for (const l of labels) grand[`${l} (% total)`] = 1;
+      } else {
+        // For each col key label include totals
+        for (const colLabel of colKeyLabels) {
+          const aggs = (colLabel === 'Grand Total') ? grandTotals : (() => {
+            const parts = colLabel.split(' | ').map(s => s.split(': '));
+            const match = (r) => parts.every(([c, v]) => String(r[c] ?? '') === v);
+            return computeAggs(baseRows.filter(match));
+          })();
+          for (const l of labels) grand[`${colLabel} | ${l}`] = aggs[l];
+          for (const cl of calcLabels) grand[`${colLabel} | ${cl}`] = aggs[cl] ?? null;
+        }
+      }
       grand._isGrandTotal = true;
       grand._groupKey = {};
       rows.push(grand);
     }
 
     const t1 = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
-    if (isDev) console.log(`[Table] Pivot computed in ${Math.round(t1 - t0)}ms (rows=${baseRows.length}, levels=${pivotConfig.columns.length}, labels=${labels.length})`);
+    if (isDev) console.log(`[Table] Pivot computed in ${Math.round(t1 - t0)}ms (rows=${baseRows.length}, levels=${pivotConfig.columns.length}, labels=${labels.length}, colAxis=${colAxis.length})`);
     return rows;
-  }, [isPivotView, pivotConfig, withDerived, serverMode, serverAllRows, serverRowsWithDerived]);
+  }, [isPivotView, pivotConfig, withDerivedAndBuckets, serverMode, serverAllRows, serverRowsWithDerivedAndBuckets, JSON.stringify(pivotCalcMeasures)]);
+
+  // Persist pivot collapsed, calc measures, and bins per dataset signature
+  useEffect(() => {
+    const key = `table.pivotCollapsed.${baseHeaders.join('|')}`;
+    try {
+      const s = localStorage.getItem(key);
+      if (s) setPivotCollapsed(new Set(JSON.parse(s)));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseHeaders.join(',')]);
+  useEffect(() => {
+    const key = `table.pivotCollapsed.${baseHeaders.join('|')}`;
+    try { localStorage.setItem(key, JSON.stringify(Array.from(pivotCollapsed))); } catch {}
+  }, [pivotCollapsed, baseHeaders]);
+  useEffect(() => {
+    const key = `table.pivotCalcMeasures.${baseHeaders.join('|')}`;
+    try {
+      const s = localStorage.getItem(key);
+      if (s) {
+        const v = JSON.parse(s);
+        if (Array.isArray(v)) setPivotCalcMeasures(v);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseHeaders.join(',')]);
+  useEffect(() => {
+    const key = `table.pivotCalcMeasures.${baseHeaders.join('|')}`;
+    try { localStorage.setItem(key, JSON.stringify(pivotCalcMeasures)); } catch {}
+  }, [pivotCalcMeasures, baseHeaders]);
+  useEffect(() => {
+    const key = `table.pivotBins.${baseHeaders.join('|')}`;
+    try {
+      const s = localStorage.getItem(key);
+      if (s) {
+        const v = JSON.parse(s);
+        if (v && typeof v === 'object') setPivotBins(v);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseHeaders.join(',')]);
+  useEffect(() => {
+    const key = `table.pivotBins.${baseHeaders.join('|')}`;
+    try { localStorage.setItem(key, JSON.stringify(pivotBins)); } catch {}
+  }, [pivotBins, baseHeaders]);
 
   // pagination (last step) — in serverMode, rows come from server
   const sourceRows = isPivotView ? pivotedData : (serverMode ? serverRowsWithDerived : sortedData);
@@ -1476,12 +1908,36 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           const funcs = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
           const labels = [];
           for (const m of measures) for (const f of funcs) labels.push(`${m} (${f})`);
+          const calcUser = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
           const calc = [];
           if (pivotConfig.calcPctTotal) calc.push(...labels.map(l => `${l} (% total)`));
           if (pivotConfig.calcPctParent) calc.push(...labels.map(l => `${l} (% parent)`));
           if (pivotConfig.calcRank) calc.push(`${labels[0]} (Rank)`);
           if (pivotConfig.calcRunning) calc.push(`${labels[0]} (Running)`);
-          return [...pivotConfig.columns, ...labels, ...calc];
+          const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+          if (colAxis.length === 0) {
+            const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+            return [...rowCols, ...labels, ...calc, ...calcUser];
+          }
+          const perCol = []; const rows = pivotedData;
+          const colLabels = (() => {
+            const set = new Set();
+            rows.forEach(r => Object.keys(r).forEach(k => { if (k.includes(' | ')) set.add(k.split(' | ')[0]); }));
+            return Array.from(set).sort((a,b) => a.localeCompare(b));
+          })();
+          const baseKeys = [...labels, ...calcUser];
+          colLabels.forEach(c => { baseKeys.forEach(m => perCol.push(`${c} | ${m}`)); if (pivotConfig.percentRow) baseKeys.forEach(m => perCol.push(`${c} | ${m} (% row)`)); });
+          // Include time-intel columns if present
+          const hasTimeIntel = rows.some(r => Object.keys(r).some(k => /(MoM%|YoY%|YTD|MTD)$/.test(k)));
+          if (hasTimeIntel) {
+            const extra = [];
+            rows.forEach(r => Object.keys(r).forEach(k => { if (/(MoM%|YoY%|YTD|MTD)$/.test(k)) extra.push(k); }));
+            const uniq = Array.from(new Set(extra));
+            // ensure we include only those whose left-part exists
+            uniq.forEach(k => { if (!perCol.includes(k)) perCol.push(k); });
+          }
+          const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+          return [...rowCols, ...perCol];
         })()
       : displayColumns;
     const rows = isPivotView ? pivotedData : sortedData;
@@ -1563,12 +2019,34 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
             const funcs = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
             const labels = [];
             for (const m of measures) for (const f of funcs) labels.push(`${m} (${f})`);
+            const calcUser = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
             const calc = [];
             if (pivotConfig.calcPctTotal) calc.push(...labels.map(l => `${l} (% total)`));
             if (pivotConfig.calcPctParent) calc.push(...labels.map(l => `${l} (% parent)`));
             if (pivotConfig.calcRank) calc.push(`${labels[0]} (Rank)`);
             if (pivotConfig.calcRunning) calc.push(`${labels[0]} (Running)`);
-            return [...pivotConfig.columns, ...labels, ...calc];
+            const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+            if (colAxis.length === 0) {
+              const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+              return [...rowCols, ...labels, ...calc, ...calcUser];
+            }
+            const perCol = []; const rows = pivotedData;
+            const colLabels = (() => {
+              const set = new Set();
+              rows.forEach(r => Object.keys(r).forEach(k => { if (k.includes(' | ')) set.add(k.split(' | ')[0]); }));
+              return Array.from(set).sort((a,b) => a.localeCompare(b));
+            })();
+            const baseKeys = [...labels, ...calcUser];
+            colLabels.forEach(c => { baseKeys.forEach(m => perCol.push(`${c} | ${m}`)); if (pivotConfig.percentRow) baseKeys.forEach(m => perCol.push(`${c} | ${m} (% row)`)); });
+            const hasTimeIntel = rows.some(r => Object.keys(r).some(k => /(MoM%|YoY%|YTD|MTD)$/.test(k)));
+            if (hasTimeIntel) {
+              const extra = [];
+              rows.forEach(r => Object.keys(r).forEach(k => { if (/(MoM%|YoY%|YTD|MTD)$/.test(k)) extra.push(k); }));
+              const uniq = Array.from(new Set(extra));
+              uniq.forEach(k => { if (!perCol.includes(k)) perCol.push(k); });
+            }
+            const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+            return [...rowCols, ...perCol];
           })()
         : displayColumns;
       const rows = isPivotView ? pivotedData : sortedData;
@@ -1630,12 +2108,30 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
             const funcs = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
             const labels = [];
             for (const m of measures) for (const f of funcs) labels.push(`${m} (${f})`);
+            const calcUser = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
             const calc = [];
             if (pivotConfig.calcPctTotal) calc.push(...labels.map(l => `${l} (% total)`));
             if (pivotConfig.calcPctParent) calc.push(...labels.map(l => `${l} (% parent)`));
             if (pivotConfig.calcRank) calc.push(`${labels[0]} (Rank)`);
             if (pivotConfig.calcRunning) calc.push(`${labels[0]} (Running)`);
-            return [...pivotConfig.columns, ...labels, ...calc];
+            const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+            if (colAxis.length === 0) return [...pivotConfig.columns, ...labels, ...calc, ...calcUser];
+            const perCol = []; const rows = pivotedData;
+            const colLabels = (() => {
+              const set = new Set();
+              rows.forEach(r => Object.keys(r).forEach(k => { if (k.includes(' | ')) set.add(k.split(' | ')[0]); }));
+              return Array.from(set).sort((a,b) => a.localeCompare(b));
+            })();
+            const baseKeys = [...labels, ...calcUser];
+            colLabels.forEach(c => { baseKeys.forEach(m => perCol.push(`${c} | ${m}`)); if (pivotConfig.percentRow) baseKeys.forEach(m => perCol.push(`${c} | ${m} (% row)`)); });
+            const hasTimeIntel = rows.some(r => Object.keys(r).some(k => /(MoM%|YoY%|YTD|MTD)$/.test(k)));
+            if (hasTimeIntel) {
+              const extra = [];
+              rows.forEach(r => Object.keys(r).forEach(k => { if (/(MoM%|YoY%|YTD|MTD)$/.test(k)) extra.push(k); }));
+              const uniq = Array.from(new Set(extra));
+              uniq.forEach(k => { if (!perCol.includes(k)) perCol.push(k); });
+            }
+            return [...pivotConfig.columns, ...perCol];
           })()
         : displayColumns;
       const rows = isPivotView ? pivotedData : sortedData;
@@ -1828,6 +2324,90 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const disabledStyle = { pointerEvents: 'none', opacity: 0.6, cursor: 'not-allowed' };
   const allDisabled = !!buttonsDisabled;
 
+  // Helper to save current view to backend (Oracle)
+  const saveCurrentView = async () => {
+    try {
+      const name = window.prompt('Enter a name for this view');
+      if (!name) return;
+      const datasetSig = baseHeaders.join('|');
+      const viewState = {
+        visibleColumns,
+        sortConfig,
+        colFilters,
+        valueFilters,
+        advFilters,
+        advCombine,
+        derivedCols,
+        pivotConfig,
+        colFormats,
+        freezeCount,
+        columnOrder,
+        condRules,
+        rowLabelsMode: pivotConfig && pivotConfig.rowLabelsMode,
+        exportContext,
+        tableOpsMode,
+        pushDownDb,
+      };
+      const res = await fetch('/api/table/save_view', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewName: name, datasetSig, viewState, owner: '' }),
+      });
+      let payload = null;
+      const ct = res.headers.get('content-type') || '';
+      try {
+        payload = ct.includes('application/json') ? await res.json() : await res.text();
+      } catch (e) {
+        payload = null;
+      }
+      if (!res.ok) {
+        const msg = (payload && payload.error) ? payload.error : (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(msg);
+      }
+      alert('View saved');
+    } catch (e) {
+      console.error('Save view failed', e);
+      alert('Failed to save view. See console for details.');
+    }
+  };
+
+  // Load views UI
+  const [showLoadPicker, setShowLoadPicker] = useState(false);
+  const [savedViews, setSavedViews] = useState([]);
+  const fetchSavedViews = async () => {
+    try {
+      const qs = new URLSearchParams({ datasetSig: baseHeaders.join('|') });
+      const res = await fetch(`/api/table/saved_views?${qs.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      const payload = ct.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) throw new Error((payload && payload.error) || (typeof payload === 'string' ? payload : `HTTP ${res.status}`));
+      const arr = (payload && payload.views) || [];
+      setSavedViews(Array.isArray(arr) ? arr : []);
+    } catch (e) {
+      console.error('Fetch saved views failed', e);
+      setSavedViews([]);
+    }
+  };
+
+  const applyViewState = (st) => {
+    try {
+      if (!st || typeof st !== 'object') return;
+      if (st.visibleColumns) setVisibleColumns(st.visibleColumns);
+      if (st.sortConfig) setSortConfig(st.sortConfig);
+      if (st.colFilters) setColFilters(st.colFilters);
+      if (st.valueFilters) setValueFilters(st.valueFilters);
+      if (st.advFilters) setAdvFilters(st.advFilters);
+      if (st.advCombine) setAdvCombine(st.advCombine);
+      if (st.derivedCols) setDerivedCols(st.derivedCols);
+      if (st.pivotConfig) setPivotConfig(prev => ({ ...prev, ...st.pivotConfig }));
+      if (st.colFormats) setColFormats(st.colFormats);
+      if (typeof st.freezeCount === 'number') setFreezeCount(st.freezeCount);
+      if (st.columnOrder) setColumnOrder(st.columnOrder);
+      if (st.condRules) setCondRules(st.condRules);
+      setCurrentPage(1);
+    } catch (e) { console.error('Apply view failed', e); }
+  };
+
   return (
     <div className={`table-container ${allDisabled ? 'disable-buttons' : ''}`} style={containerStyle} aria-disabled={allDisabled}>
       {(
@@ -1878,6 +2458,24 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
       )}
       {/* Excel-like Toolbar with icon buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 6, border: '1px solid #333', borderRadius: 6, background: '#1f1f1f', marginBottom: 8, flexWrap: 'wrap' }}>
+        {/* Save View */}
+        <ToolbarButton
+          icon={ICON_SAVE}
+          alt="Save View"
+          title="Save current view"
+          active={false}
+          disabled={allDisabled}
+          onClick={saveCurrentView}
+        />
+        {/* Load View */}
+        <ToolbarButton
+          icon={ICON_LOAD}
+          alt="Load View"
+          title="Load saved view"
+          active={!!showLoadPicker}
+          disabled={allDisabled}
+          onClick={() => { setShowLoadPicker(v => !v); if (!showLoadPicker) fetchSavedViews(); }}
+        />
         {/* Column Picker */}
         <ToolbarButton
           icon={ICON_COLUMNS}
@@ -2063,8 +2661,35 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           <input type="number" min="0" max={displayColumns.length} value={freezeCount} onChange={(e) => setFreezeCount(Math.max(0, Math.min(displayColumns.length, Number(e.target.value))))} style={{ width: 56, marginLeft: 6, padding: '2px', background: '#1e1e1e', border: '1px solid #444', color: '#d4d4d4', borderRadius: 4 }} />
         </label>
       </div>
+      {/* Load view picker */}
+      {showLoadPicker && (
+        <div style={{ position: 'fixed', top: 64, right: 10, zIndex: 1000, background: '#252526', border: '1px solid #444', borderRadius: 6, padding: 8, width: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ color: '#fff', fontWeight: 600 }}>Saved Views</div>
+            <button type="button" onClick={() => setShowLoadPicker(false)} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Close</button>
+          </div>
+          {savedViews.length === 0 ? (
+            <div style={{ color: '#aaa' }}>No saved views.</div>
+          ) : savedViews.map(v => (
+            <div key={`${v.viewName}|${v.createdAt}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, alignItems: 'center', border: '1px solid #333', borderRadius: 6, padding: 6, background: '#1f1f1f', marginBottom: 6 }}>
+              <div>
+                <div style={{ color: '#fff', fontWeight: 600 }}>{v.viewName}</div>
+                <div style={{ color: '#aaa', fontSize: '0.8rem' }}>{v.createdAt}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" onClick={() => { applyViewState(v.content || {}); setShowLoadPicker(false); }} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Load</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {/* Controls (minimal; main inputs moved to toolbar) */}
       <div className="sec-controls" style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
+        {/* Undo/Redo */}
+        <div style={{ display: 'inline-flex', gap: 6 }}>
+          <button type="button" onClick={undo} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Undo</button>
+          <button type="button" onClick={redo} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Redo</button>
+        </div>
         {/* Search, dropdown, checkboxes, font size, freeze are now in the toolbar */}
 
         {/* Column picker (trigger moved to toolbar) */}
@@ -2089,14 +2714,105 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   {showDrill && (
     <div style={{ position: 'fixed', top: 0, right: 0, height: '100%', width: '50%', maxWidth: 640, background: '#111', borderLeft: '1px solid #333', zIndex: 100, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderBottom: '1px solid #333', background: '#151515', color: '#ddd' }}>
-        <div>Drill-through ({drillRows.length} rows)</div>
+        <div>
+          <div style={{ fontWeight: 600 }}>Drill-through ({drillRows.length} rows)</div>
+          {(() => {
+            const ctx = drillContext || {};
+            const chips = [];
+            if (ctx.column != null) {
+              chips.push({ k: String(ctx.column), v: String(ctx.value ?? '') });
+            }
+            if (ctx.groupKey && typeof ctx.groupKey === 'object') {
+              for (const k of Object.keys(ctx.groupKey)) chips.push({ k, v: String(ctx.groupKey[k] ?? '') });
+            }
+            if (!chips.length) return null;
+            return (
+              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {chips.map((c, i) => (
+                  <span key={`${c.k}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 6px', borderRadius: 12, background: '#2d2d2d', color: '#ddd', border: '1px solid #444' }}>
+                    <strong>{c.k}</strong>: {c.v}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
         <button type="button" onClick={() => setShowDrill(false)} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Close</button>
       </div>
+      {/* Selection summary & actions */}
+      {(() => {
+        const colSel = Object.entries(selectedValuesByCol || {}).filter(([c, s]) => s && s.size > 0);
+        const colCount = selectedColumns.size + colSel.length;
+        const rowCount = selectedRowIdx.size;
+        if (!colCount && !rowCount) return null;
+        const keepOnly = () => {
+          // If exactly one column of values selected, keep only those values via valueFilters
+          const cols = colSel.length ? colSel : Array.from(selectedColumns).map(c => [c, new Set()]);
+          if (cols.length === 1) {
+            const [col, set] = cols[0];
+            const values = set && set.size ? Array.from(set) : [];
+            if (values.length) {
+              setValueFilters(prev => ({ ...prev, [col]: values }));
+              clearSelection(); setCurrentPage(1);
+              return;
+            }
+          }
+        };
+        const exclude = () => {
+          if (colSel.length === 1) {
+            const [col, setv] = colSel[0];
+            const currentRows = isPivotView ? pivotedData : sortedData;
+            const allVals = Array.from(new Set(currentRows.map(r => String(r?.[col] ?? ''))));
+            const remaining = allVals.filter(v => !setv.has(v));
+            setValueFilters(prev => ({ ...prev, [col]: remaining }));
+            clearSelection(); setCurrentPage(1);
+          }
+        };
+        const addFilter = () => keepOnly();
+        const copySel = async () => {
+          try {
+            const lines = [];
+            for (const [col, setv] of colSel) {
+              for (const v of Array.from(setv)) lines.push(`${col}\t${v}`);
+            }
+            if (!lines.length) return;
+            await navigator.clipboard.writeText(lines.join('\n'));
+          } catch {}
+        };
+        const exportSel = () => {
+          const rows = [];
+          for (const [col, setv] of colSel) {
+            for (const v of Array.from(setv)) rows.push({ column: col, value: v });
+          }
+          const csv = ['column,value'].concat(rows.map(r => `${JSON.stringify(r.column)},${JSON.stringify(r.value)}`)).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'selection.csv'; a.click(); URL.revokeObjectURL(url);
+        };
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: 6, border: '1px solid #333', borderRadius: 6, background: '#1f1f1f' }}>
+            <span style={{ color: '#ddd' }}>Selection: {colCount ? `${colCount} col/cell groups` : ''}{rowCount ? ` • ${rowCount} rows` : ''}</span>
+            <button type="button" onClick={keepOnly} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Keep Only</button>
+            <button type="button" onClick={exclude} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Exclude</button>
+            <button type="button" onClick={addFilter} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Add as filter</button>
+            <button type="button" onClick={copySel} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Copy</button>
+            <button type="button" onClick={exportSel} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export</button>
+            <button type="button" onClick={clearSelection} style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Clear</button>
+          </div>
+        );
+      })()}
       <div style={{ overflow: 'auto', padding: 8 }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: `${fontSize}px` }}>
+        {(() => {
+          // Determine which columns to show: hide drilled column and group key columns (already shown as chips)
+          const ctx = drillContext || {};
+          const hide = new Set();
+          if (ctx.column) hide.add(ctx.column);
+          if (ctx.groupKey && typeof ctx.groupKey === 'object') { Object.keys(ctx.groupKey).forEach(k => hide.add(k)); }
+          const cols = headers.filter(h => !hide.has(h));
+          return (
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: `${fontSize}px` }}>
           <thead>
             <tr>
-              {headers.map((h) => (
+              {cols.map((h) => (
                 <th key={h} style={{ border: '1px solid #333', background: '#0e639c', color: '#fff', padding: 4, textAlign: numericCols.has(h) ? 'right' : 'left' }}>{h}</th>
               ))}
             </tr>
@@ -2104,7 +2820,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           <tbody>
             {drillRows.slice(0, 500).map((r, i) => (
               <tr key={i}>
-                {headers.map((h) => {
+                {cols.map((h) => {
                   const txt = renderCell(r[h]);
                   return (
                     <td key={`${i}-${h}`} style={{ border: '1px solid #333', padding: 4, textAlign: numericCols.has(h) ? 'right' : 'left' }}>
@@ -2115,7 +2831,9 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
               </tr>
             ))}
           </tbody>
-        </table>
+            </table>
+          );
+        })()}
         {drillRows.length > 500 && <div style={{ color: '#aaa', marginTop: 6 }}>(Showing first 500 rows)</div>}
       </div>
     </div>
@@ -2180,24 +2898,64 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
               </div>
               <div style={{ flex: '1 1 auto', overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
 
-              {/* Pivot columns (multi-select) */}
-              <div style={{ color: "#aaa", fontSize: "0.85rem" }}>Pivot Columns:</div>
-              <div style={{ maxHeight: 160, overflow: "auto", border: "1px solid #333", borderRadius: 4, padding: 6 }}>
-                {headers.map((col) => (
-                  <label key={col} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', color: "#ddd", fontSize: "0.9rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={pivotConfig.columns.includes(col)}
-                      onChange={() =>
-                        setPivotConfig((prev) => {
-                          const exists = prev.columns.includes(col);
-                          return { ...prev, columns: exists ? prev.columns.filter((c) => c !== col) : [...prev.columns, col] };
-                        })
-                      }
-                    />
-                    {col}
-                  </label>
-                ))}
+              {/* Field List: drag-and-drop Rows/Columns/Values/Filters */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem' }}>Field List (drag to areas):</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ border: '1px solid #333', borderRadius: 4, padding: 6, minHeight: 100 }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    const f = e.dataTransfer.getData('text/pivot-field');
+                    if (!f) return;
+                    setPivotConfig(prev => prev.columns.includes(f) ? prev : { ...prev, columns: [...prev.columns, f] });
+                  }}>
+                  <div style={{ color: '#ddd', fontWeight: 600, marginBottom: 4 }}>Rows</div>
+                  {pivotConfig.columns.map((f) => (
+                    <div key={`row-${f}`} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', padding: '2px 6px', margin: 2, background: '#1f1f1f', border: '1px solid #333', borderRadius: 12 }}>
+                      <span>{f}</span>
+                      <button type="button" onClick={() => setPivotConfig(prev => ({ ...prev, columns: prev.columns.filter(x => x !== f) }))} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ border: '1px solid #333', borderRadius: 4, padding: 6, minHeight: 100 }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    const f = e.dataTransfer.getData('text/pivot-field');
+                    if (!f) return;
+                    setPivotConfig(prev => prev.colAxis && prev.colAxis.includes(f) ? prev : { ...prev, colAxis: [...(prev.colAxis||[]), f] });
+                  }}>
+                  <div style={{ color: '#ddd', fontWeight: 600, marginBottom: 4 }}>Columns</div>
+                  {(pivotConfig.colAxis||[]).map((f) => (
+                    <div key={`col-${f}`} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', padding: '2px 6px', margin: 2, background: '#1f1f1f', border: '1px solid #333', borderRadius: 12 }}>
+                      <span>{f}</span>
+                      <button type="button" onClick={() => setPivotConfig(prev => ({ ...prev, colAxis: (prev.colAxis||[]).filter(x => x !== f) }))} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ gridColumn: '1 / span 2', border: '1px solid #333', borderRadius: 4, padding: 6 }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    const f = e.dataTransfer.getData('text/pivot-field');
+                    if (!f) return;
+                    setPivotConfig(prev => ({ ...prev, measures: prev.measures && prev.measures.includes(f) ? prev.measures : [...(prev.measures||[]), f], aggColumn: '' }));
+                  }}>
+                  <div style={{ color: '#ddd', fontWeight: 600, marginBottom: 4 }}>Values</div>
+                  {(pivotConfig.measures && pivotConfig.measures.length ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : [])).map((f) => (
+                    <div key={`val-${f}`} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', padding: '2px 6px', margin: 2, background: '#1f1f1f', border: '1px solid #333', borderRadius: 12 }}>
+                      <span>{f}</span>
+                      <button type="button" onClick={() => setPivotConfig(prev => ({ ...prev, measures: (prev.measures||[]).filter(x => x !== f), aggColumn: '' }))} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ gridColumn: '1 / span 2', border: '1px solid #333', borderRadius: 4, padding: 6 }}>
+                  <div style={{ color: '#ddd', fontWeight: 600, marginBottom: 4 }}>Filters (use table filters or drag fields here for reference)</div>
+                  {/* Placeholder list; actual filtering handled by table filters above */}
+                </div>
+                <div style={{ gridColumn: '1 / span 2', border: '1px dashed #444', borderRadius: 4, padding: 6, maxHeight: 160, overflow: 'auto' }}>
+                  <div style={{ color: '#ddd', fontWeight: 600, marginBottom: 4 }}>All fields</div>
+                  {headers.map(h => (
+                    <span key={`fld-${h}`} draggable onDragStart={(e) => { e.dataTransfer.setData('text/pivot-field', h); e.dataTransfer.effectAllowed = 'move'; }} style={{ display: 'inline-block', margin: 2, padding: '2px 6px', background: '#1f1f1f', border: '1px solid #333', borderRadius: 12, color: '#ddd', cursor: 'grab' }}>{h}</span>
+                  ))}
+                </div>
               </div>
 
               {/* Measures (multi-select) */}
@@ -2235,6 +2993,43 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                 ))}
               </div>
 
+              {/* Top-N within groups */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Top‑N within groups:</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.topN && pivotConfig.topN.enabled)} onChange={(e) => setPivotConfig(prev => ({ ...prev, topN: { ...(prev.topN||{}), enabled: e.target.checked } }))} /> Enable</label>
+                <label style={{ color: '#ddd' }}>Level
+                  <input type="number" min="0" max={Math.max(0, pivotConfig.columns.length-1)} value={(pivotConfig.topN && pivotConfig.topN.level) || 0} onChange={(e) => setPivotConfig(prev => ({ ...prev, topN: { ...(prev.topN||{}), level: Math.max(0, Math.min(pivotConfig.columns.length-1, Number(e.target.value)||0)) } }))} style={{ width: 60, marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }} />
+                </label>
+                <label style={{ color: '#ddd' }}>N
+                  <input type="number" min="1" max="100" value={(pivotConfig.topN && pivotConfig.topN.n) || 10} onChange={(e) => setPivotConfig(prev => ({ ...prev, topN: { ...(prev.topN||{}), n: Math.max(1, Math.min(100, Number(e.target.value)||10)) } }))} style={{ width: 60, marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }} />
+                </label>
+                <label style={{ color: '#ddd' }}>By
+                  <select value={(pivotConfig.topN && pivotConfig.topN.measure) || ''} onChange={(e) => setPivotConfig(prev => ({ ...prev, topN: { ...(prev.topN||{}), measure: e.target.value || null } }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="">(primary measure)</option>
+                    {(() => {
+                      const ms = (pivotConfig.measures && pivotConfig.measures.length) ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : []);
+                      const fs = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
+                      const labels = [];
+                      for (const m of ms) for (const f of fs) labels.push(`${m} (${f})`);
+                      return labels.map(l => <option key={l} value={l}>{l}</option>);
+                    })()}
+                  </select>
+                </label>
+                <label style={{ color: '#ddd' }}>Dir
+                  <select value={(pivotConfig.topN && pivotConfig.topN.dir) || 'desc'} onChange={(e) => setPivotConfig(prev => ({ ...prev, topN: { ...(prev.topN||{}), dir: e.target.value } }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="desc">desc</option>
+                    <option value="asc">asc</option>
+                  </select>
+                </label>
+              </div>
+
+              {/* Percent of row/column */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Percent of parent:</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotConfig.percentRow} onChange={(e) => setPivotConfig(prev => ({ ...prev, percentRow: e.target.checked }))} /> by row</label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotConfig.percentCol} onChange={(e) => setPivotConfig(prev => ({ ...prev, percentCol: e.target.checked }))} /> by column</label>
+              </div>
+
               {/* Calculated toggles */}
               <div style={{ color: "#aaa", fontSize: "0.85rem", marginTop: 6 }}>Calculated columns:</div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -2242,6 +3037,130 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                 <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotConfig.calcPctParent} onChange={(e) => setPivotConfig(prev => ({ ...prev, calcPctParent: e.target.checked }))} /> % of parent</label>
                 <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotConfig.calcRank} onChange={(e) => setPivotConfig(prev => ({ ...prev, calcRank: e.target.checked }))} /> rank</label>
                 <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotConfig.calcRunning} onChange={(e) => setPivotConfig(prev => ({ ...prev, calcRunning: e.target.checked }))} /> running total</label>
+              </div>
+
+              {/* Sorting among groups */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Group sorting:</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}>By
+                  <select value={pivotConfig.sortMeasure || ''} onChange={(e) => setPivotConfig(prev => ({ ...prev, sortMeasure: e.target.value || null }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="">(primary measure)</option>
+                    {(() => {
+                      const ms = (pivotConfig.measures && pivotConfig.measures.length) ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : []);
+                      const fs = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
+                      const labels = [];
+                      for (const m of ms) for (const f of fs) labels.push(`${m} (${f})`);
+                      const calcU = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
+                      return [...labels, ...calcU].map(l => <option key={l} value={l}>{l}</option>);
+                    })()}
+                  </select>
+                </label>
+                <label style={{ color: '#ddd' }}>Dir
+                  <select value={pivotConfig.sortDir || 'desc'} onChange={(e) => setPivotConfig(prev => ({ ...prev, sortDir: e.target.value }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="desc">desc</option>
+                    <option value="asc">asc</option>
+                  </select>
+                </label>
+              </div>
+
+              {/* Subtotals / Grand totals */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Totals:</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={pivotConfig.showSubtotals !== false} onChange={(e) => setPivotConfig(prev => ({ ...prev, showSubtotals: e.target.checked }))} /> Show subtotals</label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={pivotConfig.showGrand !== false} onChange={(e) => setPivotConfig(prev => ({ ...prev, showGrand: e.target.checked }))} /> Show grand total</label>
+                <button type="button" onClick={() => setPivotCollapsed(new Set())} style={{ marginLeft: 'auto', padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Expand all</button>
+                <button type="button" onClick={() => setPivotConfig(prev => ({ ...prev, showSubtotals: false }))} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Collapse all</button>
+              </div>
+
+              {/* Row labels mode */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Row labels:</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}>
+                  <input type="radio" name="rowlabels" checked={pivotConfig.rowLabelsMode === 'separate'} onChange={() => setPivotConfig(prev => ({ ...prev, rowLabelsMode: 'separate' }))} /> Separate columns (Region, Customer, ...)
+                </label>
+                <label style={{ color: '#ddd' }}>
+                  <input type="radio" name="rowlabels" checked={pivotConfig.rowLabelsMode === 'single'} onChange={() => setPivotConfig(prev => ({ ...prev, rowLabelsMode: 'single' }))} /> Single "Row Labels" column
+                </label>
+              </div>
+
+              {/* Calculated measures (user-defined) */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Calculated measures:</div>
+              {pivotCalcMeasures && pivotCalcMeasures.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflow: 'auto' }}>
+                  {pivotCalcMeasures.map(cm => (
+                    <div key={cm.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', gap: 6, border: '1px solid #333', borderRadius: 6, padding: 6, background: '#1f1f1f' }}>
+                      <input type="checkbox" checked={cm.enabled !== false} onChange={() => setPivotCalcMeasures(prev => prev.map(x => x.id === cm.id ? { ...x, enabled: !(x.enabled !== false) } : x))} />
+                      <div style={{ color: '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cm.name} = {cm.formula}</div>
+                      <button type="button" onClick={() => setPivotCalcMeasures(prev => prev.filter(x => x.id !== cm.id))} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #555', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Delete</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 6, alignItems: 'center' }}>
+                <input placeholder="Name (e.g., Margin %)" value={pivotCalcDraft.name} onChange={(e) => setPivotCalcDraft(d => ({ ...d, name: e.target.value }))} style={{ background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }} />
+                <input placeholder="Formula (use m['Sales (sum)'])" value={pivotCalcDraft.formula} onChange={(e) => setPivotCalcDraft(d => ({ ...d, formula: e.target.value }))} style={{ background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }} />
+                <button type="button" onClick={() => {
+                  const n = (pivotCalcDraft.name || '').trim();
+                  if (!n) return;
+                  setPivotCalcMeasures(prev => [...prev, { id: Date.now() + Math.random(), name: n, formula: pivotCalcDraft.formula || '', enabled: true }]);
+                  setPivotCalcDraft({ name: '', formula: '' });
+                }} style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #444', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Add</button>
+              </div>
+
+              {/* Buckets / Grains */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Binning & Time Buckets:</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 6, alignItems: 'center' }}>
+                <label style={{ color: '#ddd' }}>Column
+                  <select onChange={(e) => {
+                    const col = e.target.value;
+                    if (!col) return;
+                    setPivotBins(prev => ({ ...prev, [col]: prev[col] || { type: 'equal', bins: 5 } }));
+                  }} value="" style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="">(choose)</option>
+                    {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </label>
+              </div>
+              {Object.entries(pivotBins || {}).map(([col, cfg]) => (
+                <div key={col} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 6, alignItems: 'center', border: '1px solid #333', borderRadius: 6, padding: 6, background: '#1f1f1f' }}>
+                  <div style={{ color: '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col}</div>
+                  <select value={cfg.type} onChange={(e) => setPivotBins(prev => ({ ...prev, [col]: { ...(prev[col]||{}), type: e.target.value } }))} style={{ background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="equal">equal bins</option>
+                    <option value="time">time grain</option>
+                  </select>
+                  {cfg.type === 'equal' ? (
+                    <label style={{ color: '#aaa' }}>Bins
+                      <input type="number" min="1" max="20" value={cfg.bins || 5} onChange={(e) => setPivotBins(prev => ({ ...prev, [col]: { ...(prev[col]||{}), bins: Math.max(1, Math.min(20, Number(e.target.value)||5)) } }))} style={{ marginLeft: 6, width: 80, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }} />
+                    </label>
+                  ) : (
+                    <label style={{ color: '#aaa' }}>Grain
+                      <select value={cfg.grain || 'month'} onChange={(e) => setPivotBins(prev => ({ ...prev, [col]: { ...(prev[col]||{}), grain: e.target.value } }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                        <option value="year">year</option>
+                        <option value="quarter">quarter</option>
+                        <option value="month">month</option>
+                        <option value="week">week</option>
+                        <option value="day">day</option>
+                      </select>
+                    </label>
+                  )}
+                  <button type="button" onClick={() => setPivotBins(prev => { const copy = { ...prev }; delete copy[col]; return copy; })} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #555', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Remove</button>
+                </div>
+              ))}
+
+              {/* Time Intelligence (requires one time-grain column on Columns axis) */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Time Intelligence:</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.timeIntel && pivotConfig.timeIntel.enabled)} onChange={(e) => setPivotConfig(prev => ({ ...prev, timeIntel: { ...(prev.timeIntel||{}), enabled: e.target.checked } }))} /> Enable</label>
+                <label style={{ color: '#ddd' }}>Field
+                  <select value={(pivotConfig.timeIntel && pivotConfig.timeIntel.field) || ''} onChange={(e) => setPivotConfig(prev => ({ ...prev, timeIntel: { ...(prev.timeIntel||{}), field: e.target.value || null } }))} style={{ marginLeft: 6, background: '#1e1e1e', border: '1px solid #444', color: '#fff', padding: 6, borderRadius: 4 }}>
+                    <option value="">(auto)</option>
+                    {(pivotConfig.colAxis||[]).map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.timeIntel && (pivotConfig.timeIntel.funcs||[]).includes('MoM'))} onChange={(e) => setPivotConfig(prev => { const funcs = new Set(prev.timeIntel?.funcs||[]); if (e.target.checked) funcs.add('MoM'); else funcs.delete('MoM'); return { ...prev, timeIntel: { ...(prev.timeIntel||{}), funcs: Array.from(funcs) } }; })} /> MoM</label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.timeIntel && (pivotConfig.timeIntel.funcs||[]).includes('YoY'))} onChange={(e) => setPivotConfig(prev => { const funcs = new Set(prev.timeIntel?.funcs||[]); if (e.target.checked) funcs.add('YoY'); else funcs.delete('YoY'); return { ...prev, timeIntel: { ...(prev.timeIntel||{}), funcs: Array.from(funcs) } }; })} /> YoY</label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.timeIntel && (pivotConfig.timeIntel.funcs||[]).includes('MTD'))} onChange={(e) => setPivotConfig(prev => { const funcs = new Set(prev.timeIntel?.funcs||[]); if (e.target.checked) funcs.add('MTD'); else funcs.delete('MTD'); return { ...prev, timeIntel: { ...(prev.timeIntel||{}), funcs: Array.from(funcs) } }; })} /> MTD</label>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!(pivotConfig.timeIntel && (pivotConfig.timeIntel.funcs||[]).includes('YTD'))} onChange={(e) => setPivotConfig(prev => { const funcs = new Set(prev.timeIntel?.funcs||[]); if (e.target.checked) funcs.add('YTD'); else funcs.delete('YTD'); return { ...prev, timeIntel: { ...(prev.timeIntel||{}), funcs: Array.from(funcs) } }; })} /> YTD</label>
               </div>
 
               {/* Row styles */}
@@ -2263,6 +3182,12 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                   <input type="checkbox" checked={!!pivotStyle.subtotalNewline} onChange={(e) => setPivotStyle(ps => ({ ...ps, subtotalNewline: e.target.checked }))} />
                   Show "Subtotal" on a new line in group cell
                 </label>
+              </div>
+
+              {/* Sparklines */}
+              <div style={{ color: '#aaa', fontSize: '0.85rem', marginTop: 6 }}>Inline sparklines:</div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}><input type="checkbox" checked={!!pivotSparkline} onChange={(e) => setPivotSparkline(e.target.checked)} /> Show sparkline (primary measure across column axis)</label>
               </div>
 
               </div>
@@ -2457,7 +3382,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
       {/* Table */}
       {((!isPivotView) || (isPivotView && pivotConfig.columns.length > 0 && ((pivotConfig.measures && pivotConfig.measures.length) || pivotConfig.aggColumn) && ((pivotConfig.funcs && pivotConfig.funcs.length) || pivotConfig.aggFunc))) && (
       <div style={{ overflowX: 'auto' }} ref={scrollerRef}>
-      <table style={{ borderCollapse: "collapse", width: contentWidth ? `${contentWidth}px` : "100%", minWidth: "600px", fontSize: `${fontSize}px` }}>
+      <table role={isPivotView ? 'treegrid' : 'grid'} aria-readonly="true" style={{ borderCollapse: "collapse", width: contentWidth ? `${contentWidth}px` : "100%", minWidth: "600px", fontSize: `${fontSize}px` }}>
         <thead>
           <tr>
             {isVirtualized && !isPivotView && (
@@ -2479,7 +3404,34 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
               if (pivotConfig.calcPctParent) calc.push(...labels.map(l => `${l} (% parent)`));
               if (pivotConfig.calcRank) calc.push(`${labels[0]} (Rank)`);
               if (pivotConfig.calcRunning) calc.push(`${labels[0]} (Running)`);
-              return [...pivotConfig.columns, ...labels, ...calc];
+              const calcUser = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
+              const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+              if (colAxis.length === 0) {
+                const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+                return [...rowCols, ...labels, ...calc, ...calcUser];
+              }
+              // Build column header labels from data keys in pivotedData
+              let colKeyLabels = (() => {
+                const set = new Set();
+                const rows = paginatedData.length ? paginatedData : pivotedData;
+                rows.forEach(r => Object.keys(r).forEach(k => { if (k.includes(' | ') && !pivotConfig.columns.includes(k)) set.add(k); }));
+                // Extract the left side (colLabel) portion
+                const lefts = new Set();
+                Array.from(set).forEach(k => lefts.add(k.split(' | ')[0]));
+                return Array.from(lefts).sort((a,b) => a.localeCompare(b));
+              })();
+              const measureKeys = [...labels, ...calcUser];
+              const perCol = [];
+              // Optional sparkline column for the first (primary) measure
+              if (pivotSparkline && measureKeys.length > 0) {
+                perCol.push('__sparkline__');
+              }
+              colKeyLabels.forEach(colLabel => {
+                measureKeys.forEach(m => perCol.push(`${colLabel} | ${m}`));
+                if (pivotConfig.percentRow) measureKeys.forEach(m => perCol.push(`${colLabel} | ${m} (% row)`));
+              });
+              const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+              return [...rowCols, ...perCol];
             })() : displayColumns).map((header, idx) => (
               <th
                 key={header}
@@ -2504,7 +3456,10 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                 onClick={(e) => !isPivotView && handleSort(header, e.shiftKey)}
                 style={{ position: 'sticky', top: 0, zIndex: (idx < freezeCount ? 3 : 2), border: "1px solid #ddd", padding: "5px 28px 5px 5px", backgroundColor: "#0e639c", color: "white", textAlign: "left", whiteSpace: "nowrap", cursor: isPivotView ? "default" : "pointer", userSelect: "none", width: (isVirtualized && !isPivotView) ? `${Math.round(((colWidths[header] || 150)) * vScale)}px` : (colWidths[header] ? `${colWidths[header]}px` : undefined), minWidth: (isVirtualized && !isPivotView) ? `${Math.round(((colWidths[header] || 150)) * vScale)}px` : (colWidths[header] ? `${colWidths[header]}px` : undefined), ...(idx < freezeCount && !isPivotView ? { left: `${(isVirtualized ? (indexColWidthScaled + (vFreezeLeftScaled[header] || 0)) : (freezeLeft[header] || 0))}px` } : {}) }}
               >
-                <span>{header}{!isPivotView && renderSortIndicator(header)}</span>
+                <span onClick={(e) => {
+                  if (!(e.ctrlKey || e.metaKey)) return;
+                  setSelectedColumns(prev => { const s = new Set(prev); if (s.has(header)) s.delete(header); else s.add(header); return s; });
+                }} style={{ cursor: 'default', userSelect: 'none' }}>{header === '__sparkline__' ? 'Sparkline' : header}{!isPivotView && renderSortIndicator(header)}</span>
                 {!isPivotView && (
                   <span style={{ position: 'absolute', right: 4, top: 4 }}>
                     <button
@@ -2632,7 +3587,8 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           </tr>
         </thead>
         <tbody>
-          {isVirtualized && !isPivotView ? null : paginatedData.map((row, rowIndex) => {
+          {isVirtualized && !isPivotView ? null : (() => {
+            // Determine headers and rows to render (apply pivot collapse/hide)
             const measuresH = (pivotConfig.measures && pivotConfig.measures.length) ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : []);
             const funcsH = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
             const labelsH = [];
@@ -2643,11 +3599,79 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
             if (pivotConfig.calcPctParent) extraH.push(...labelsH.map(l => `${l} (% parent)`));
             if (pivotConfig.calcRank) extraH.push(`${labelsH[0]} (Rank)`);
             if (pivotConfig.calcRunning) extraH.push(`${labelsH[0]} (Running)`);
-            const rowHeaders = isPivotView ? [...pivotConfig.columns, ...labelsH, ...extraH] : displayColumns;
+            const calcUserH = (pivotCalcMeasures || []).filter(cm => cm && cm.enabled !== false && cm.name).map(cm => cm.name);
+            const colAxis = Array.isArray(pivotConfig.colAxis) ? pivotConfig.colAxis.filter(Boolean) : [];
+            let rowHeaders;
+            if (!isPivotView) {
+              rowHeaders = displayColumns;
+            } else if (colAxis.length === 0) {
+              const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+              rowHeaders = [...rowCols, ...labelsH, ...extraH, ...calcUserH];
+            } else {
+              // Build per-column headers based on keys present in the data (not a specific row)
+              const measureKeys = [...labelsH, ...calcUserH];
+              let colKeyLabels = (() => {
+                const set = new Set();
+                const rowsScan = paginatedData.length ? paginatedData : pivotedData;
+                rowsScan.forEach(r => {
+                  Object.keys(r).forEach(k => {
+                    if (k.includes(' | ') && !pivotConfig.columns.includes(k)) set.add(k.split(' | ')[0]);
+                  });
+                });
+                const arr = Array.from(set);
+                arr.sort((a,b) => a.localeCompare(b));
+                return arr;
+              })();
+              const perCol = [];
+              if (pivotSparkline && (labelsH.length + calcUserH.length) > 0) perCol.push('__sparkline__');
+              colKeyLabels.forEach(colLabel => {
+                measureKeys.forEach(m => perCol.push(`${colLabel} | ${m}`));
+                if (pivotConfig.percentRow) measureKeys.forEach(m => perCol.push(`${colLabel} | ${m} (% row)`));
+              });
+              const rowCols = (pivotConfig.rowLabelsMode === 'single') ? ['Row Labels'] : [...pivotConfig.columns];
+              rowHeaders = [...rowCols, ...perCol];
+            }
+
+            const collapsedKeys = pivotCollapsed;
+            const shouldHide = (r) => {
+              if (!isPivotView) return false;
+              if (!r || !r._isSubtotal) return false;
+              if (pivotConfig.showSubtotals === false && !r._isGrandTotal) return true;
+              for (const key of Array.from(collapsedKeys)) {
+                try {
+                  const obj = JSON.parse(key);
+                  const lv = obj.level;
+                  const gk = obj.gk || {};
+                  if (r._level != null && r._level > lv) {
+                    let match = true;
+                    for (const k of Object.keys(gk)) {
+                      if (String(r._groupKey?.[k] ?? '') !== String(gk[k] ?? '')) { match = false; break; }
+                    }
+                    if (match) return true;
+                  }
+                } catch {}
+              }
+              return false;
+            };
+            const rowsToRender = isPivotView ? paginatedData.filter(r => !shouldHide(r)) : paginatedData;
+
+            return rowsToRender.map((row, rowIndex) => {
+            const measuresH = (pivotConfig.measures && pivotConfig.measures.length) ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : []);
+            const funcsH = (pivotConfig.funcs && pivotConfig.funcs.length) ? pivotConfig.funcs : (pivotConfig.aggFunc ? [pivotConfig.aggFunc] : ['sum']);
+            const labelsH = [];
+            for (const m of measuresH) for (const f of funcsH) labelsH.push(`${m} (${f})`);
+            if (isPivotView && labelsH.length === 0) return null;
+            const extraH = [];
+            if (pivotConfig.calcPctTotal) extraH.push(...labelsH.map(l => `${l} (% total)`));
+            if (pivotConfig.calcPctParent) extraH.push(...labelsH.map(l => `${l} (% parent)`));
+            if (pivotConfig.calcRank) extraH.push(`${labelsH[0]} (Rank)`);
+            if (pivotConfig.calcRunning) extraH.push(`${labelsH[0]} (Running)`);
+            // Use headers computed above for this body render
+            const rowHeadersLocal = rowHeaders;
             const isSubtotal = row._isSubtotal;
             const isGrandTotal = row._isGrandTotal;
             return (
-              <tr
+              <tr role="row"
                 key={rowIndex}
                 style={{
                   fontWeight: isGrandTotal ? 'bold' : isSubtotal ? 600 : 'normal',
@@ -2665,34 +3689,39 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                     }
                     return true;
                   };
-                  setDrillRows(withDerived.filter(match));
+                  setDrillRows(withDerivedAndBuckets.filter(match));
                   setShowDrill(true);
                 }}
               >
                 {/* selection checkbox cell removed */}
-                {rowHeaders.map((header, i) => (
-                  <td
+                {rowHeadersLocal.map((header, i) => (
+                  <td role="gridcell"
                     key={`${rowIndex}-${header}`}
                     style={{
                       border: '1px solid #ddd',
                       padding: '5px',
-                      paddingLeft: isPivotView && isSubtotal && i === row._level ? `${(row._level + 1) * 16}px` : '5px',
-                      textAlign: isPivotView ? (pivotConfig.columns.includes(header) ? 'left' : 'right') : (numericCols.has(header) ? 'right' : 'left'),
+                      paddingLeft: (isPivotView && isSubtotal && ((pivotConfig.rowLabelsMode === 'single' && i === 0) || (pivotConfig.rowLabelsMode !== 'single' && i === row._level))) ? `${(row._level + 1) * 16}px` : '5px',
+                      textAlign: isPivotView ? (((pivotConfig.rowLabelsMode === 'single' && i === 0) || pivotConfig.columns.includes(header)) ? 'left' : 'right') : (numericCols.has(header) ? 'right' : 'left'),
                       whiteSpace: 'nowrap',
-                      ...(isPivotView ? {} : (getConditionalStyle(header, row[header]) || {})),
+                      ...(isPivotView ? {} : (getConditionalStyle(header === 'Row Labels' ? '__row_label__' : header, row[header === 'Row Labels' ? '__row_label__' : header]) || {})),
                       width: colWidths[header] ? `${colWidths[header]}px` : undefined,
                       minWidth: colWidths[header] ? `${colWidths[header]}px` : undefined,
                       ...(i < freezeCount && !isPivotView ? { position: 'sticky', left: `${freezeLeft[header] || 0}px`, zIndex: isGrandTotal || isSubtotal ? 2 : 1, background: isGrandTotal ? '#1f1f1f' : isSubtotal ? '#2d2d2d' : (getConditionalStyle(header, row[header])?.backgroundColor ? undefined : '#111') } : {}),
                     }}
-                    title={!isPivotView ? 'Ctrl/Cmd+Click to filter by this value' : undefined}
+                    title={!isPivotView ? 'Ctrl/Cmd+Click to filter by this value' : 'Ctrl/Cmd+Click to multi-select'}
                     onClick={(e) => {
-                      if (isPivotView) return;
-                      if (!(e.ctrlKey || e.metaKey)) return;
-                      const raw = row[header];
-                      const isNum = numericCols.has(header);
-                      const op = isNum ? '=' : 'equals';
-                      setColFilters(prev => ({ ...prev, [header]: { op, value: raw } }));
-                      setCurrentPage(1);
+                      if (e.ctrlKey || e.metaKey) {
+                        const raw = row[header];
+                        setSelectedValuesByCol(prev => { const p = { ...prev }; const key = String(header); const set = new Set(p[key] ? Array.from(p[key]) : []); const v = String(raw ?? ''); if (set.has(v)) set.delete(v); else set.add(v); p[key] = set; return p; });
+                        return;
+                      }
+                      if (!isPivotView) {
+                        const raw = row[header];
+                        const isNum = numericCols.has(header);
+                        const op = isNum ? '=' : 'equals';
+                        setColFilters(prev => ({ ...prev, [header]: { op, value: raw } }));
+                        setCurrentPage(1);
+                      }
                     }}
                     onDoubleClick={() => {
                       const cellVal = row[header];
@@ -2701,9 +3730,42 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                     }}
                   >
                     {(() => {
-                      const cellVal = row[header];
+                      const keyFor = (h) => (h === 'Row Labels' ? '__row_label__' : h);
+                      let cellVal = row[keyFor(header)];
+                      // For grand/subtotal rows, ensure row labels appear in the Row Labels column
+                      if (cellVal === undefined && isPivotView && isSubtotal && pivotConfig.rowLabelsMode === 'single' && header === 'Row Labels') {
+                        cellVal = row['__row_label__'];
+                      }
+                      if (cellVal === undefined && isPivotView && isSubtotal) {
+                        // Fallback to original key if mapping didn't hit
+                        cellVal = row[header];
+                      }
                       const rawText = (typeof cellVal === 'object') ? renderCell(cellVal) : String(formatValue(header, cellVal));
                       const text = rawText.length > maxClob ? rawText.slice(0, maxClob) + '…' : rawText;
+                      if (isPivotView && isSubtotal && ((pivotConfig.rowLabelsMode === 'single' && i === 0) || (pivotConfig.rowLabelsMode !== 'single' && i === row._level)) && !isGrandTotal) {
+                        const keyObj = { level: row._level, gk: row._groupKey || {} };
+                        const k = JSON.stringify(keyObj);
+                        const collapsed = pivotCollapsed.has(k);
+                        return (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                              type="button"
+                              aria-expanded={!collapsed}
+                              title={collapsed ? 'Expand' : 'Collapse'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPivotCollapsed(prev => { const s = new Set(prev); if (s.has(k)) s.delete(k); else s.add(k); return s; });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'ArrowLeft' && !pivotCollapsed.has(k)) setPivotCollapsed(prev => { const s = new Set(prev); s.add(k); return s; });
+                                if (e.key === 'ArrowRight' && pivotCollapsed.has(k)) setPivotCollapsed(prev => { const s = new Set(prev); s.delete(k); return s; });
+                              }}
+                              style={{ padding: '0 6px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}
+                            >{collapsed ? '▸' : '▾'}</button>
+                            <span>{text}</span>
+                          </span>
+                        );
+                      }
                       if (isPivotView && isSubtotal && i === row._level && pivotStyle.subtotalNewline) {
                         // Split 'Value (Subtotal)' into two lines if present
                         const m = text.match(/^(.*) \(Subtotal\)$/);
@@ -2724,7 +3786,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
                 ))}
               </tr>
             );
-          })}
+          }); })()}
         </tbody>
         {!isPivotView && showSummary && (
           <tfoot>

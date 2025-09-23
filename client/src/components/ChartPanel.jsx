@@ -44,6 +44,8 @@ const ChartPanel = ({
   const [sortDir, setSortDir] = useState('desc'); // 'asc' | 'desc'
   const [topN, setTopN] = useState(''); // '' or number
   const [legendPos, setLegendPos] = useState('top');
+  const [smallMultipleBy, setSmallMultipleBy] = useState('');
+  const [brushMode, setBrushMode] = useState(false); // simple click-to-select labels
   // Advanced options
   const [dateBucket, setDateBucket] = useState('none'); // none|day|week|month|quarter|year
   const [trendline, setTrendline] = useState(false);
@@ -282,7 +284,7 @@ const ChartPanel = ({
       return { data, options };
     }
 
-    // Bar/Line/Area with multiple series
+    // Bar/Line/Area with multiple series (supports dual-axis via yRight)
     const series = (yColumns && yColumns.length) ? yColumns : (numericCols.size ? [Array.from(numericCols)[0]] : []);
     if (!series.length) return null;
 

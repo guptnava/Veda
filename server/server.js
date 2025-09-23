@@ -648,6 +648,51 @@ app.post('/api/download-excel-query', async (req, res) => {
   }
 });
 
+// Save current view to Oracle via table-ops Flask service
+app.post('/api/table/save_view', async (req, res) => {
+  try {
+    const url = `${FLASK_TABLE_OPS_URL}/table/save_view`;
+    const flaskRes = await undiciFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    } else {
+      const text = await flaskRes.text();
+      return res.status(flaskRes.status).send(text);
+    }
+  } catch (e) {
+    console.error('save_view proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List saved views
+app.get('/api/table/saved_views', async (req, res) => {
+  try {
+    const qs = new URLSearchParams();
+    if (req.query.datasetSig) qs.set('datasetSig', req.query.datasetSig);
+    if (req.query.owner) qs.set('owner', req.query.owner);
+    const url = `${FLASK_TABLE_OPS_URL}/table/saved_views?${qs.toString()}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    } else {
+      const text = await flaskRes.text();
+      return res.status(flaskRes.status).send(text);
+    }
+  } catch (e) {
+    console.error('saved_views proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Full PDF export by re-running the query and rendering rows
 app.post('/api/download-pdf-query', async (req, res) => {
   try {
