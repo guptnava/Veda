@@ -534,6 +534,114 @@ def table_saved_views():
         except Exception:
             pass
 
+
+# ---------------- Dashboards save/list/get -----------------
+
+def _ensure_dashboards_table(conn):
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT table_name FROM user_tables WHERE table_name = 'VEDA_DASHBOARDS'")
+        row = cur.fetchone()
+        if not row:
+            cur.execute("""
+                CREATE TABLE VEDA_DASHBOARDS (
+                  NAME        VARCHAR2(200),
+                  OWNER_NAME  VARCHAR2(200),
+                  CREATED_AT  TIMESTAMP DEFAULT SYSTIMESTAMP,
+                  LAYOUT      CLOB
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Ensure dashboards table failed: {e}")
+
+
+@app.post('/dashboard/save')
+def dashboard_save():
+    body = request.get_json(force=True) or {}
+    name = body.get('name')
+    layout = body.get('layout') or {}
+    owner = body.get('owner') or ''
+    if not name:
+        return jsonify({ 'error': 'name required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_dashboards_table(conn)
+        cur = conn.cursor()
+        cur.setinputsizes(layout=oracledb.CLOB)
+        cur.execute("UPDATE VEDA_DASHBOARDS SET LAYOUT = :layout, CREATED_AT = SYSTIMESTAMP WHERE NAME = :name AND NVL(OWNER_NAME,'') = NVL(:owner,'')", name=name, owner=owner, layout=stable_stringify(layout))
+        if cur.rowcount == 0:
+            cur.execute("INSERT INTO VEDA_DASHBOARDS (NAME, OWNER_NAME, LAYOUT) VALUES (:name, :owner, :layout)", name=name, owner=owner, layout=stable_stringify(layout))
+        conn.commit()
+        return jsonify({ 'ok': True, 'name': name })
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return jsonify({ 'error': f'Oracle upsert failed: {e}' }), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.get('/dashboard/list')
+def dashboard_list():
+    owner = request.args.get('owner')
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_dashboards_table(conn)
+        cur = conn.cursor()
+        sql = "SELECT NAME, NVL(OWNER_NAME,''), CREATED_AT FROM VEDA_DASHBOARDS WHERE 1=1"
+        binds = {}
+        if owner is not None and owner != '':
+            sql += " AND NVL(OWNER_NAME,'') = NVL(:owner,'')"; binds['owner'] = owner
+        sql += " ORDER BY CREATED_AT DESC"
+        cur.execute(sql, **binds)
+        rows = [{'name': n, 'ownerName': o, 'createdAt': str(c)} for (n,o,c) in cur.fetchall()]
+        return jsonify({ 'dashboards': rows })
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.get('/dashboard/get')
+def dashboard_get():
+    name = request.args.get('name')
+    owner = request.args.get('owner')
+    if not name:
+        return jsonify({ 'error': 'name required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_dashboards_table(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT LAYOUT FROM VEDA_DASHBOARDS WHERE UPPER(NAME) = UPPER(:name) AND NVL(OWNER_NAME,1) = NVL(:owner,1)", name=name, owner=owner)
+        row = cur.fetchone()
+        if not row:
+            return jsonify({ 'error': 'Not found' }), 404
+        layout = row[0]
+        try:
+            if hasattr(layout, 'read'):
+                layout = layout.read()
+            parsed = json.loads(layout) if layout else {}
+        except Exception:
+            parsed = {}
+        return jsonify({ 'name': name, 'layout': parsed })
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
 # ---------------- Oracle pushdown adapters -----------------
 
 def _oracle_connect():

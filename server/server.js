@@ -693,6 +693,39 @@ app.get('/api/table/saved_views', async (req, res) => {
   }
 });
 
+// Dashboards proxy routes
+app.post('/api/dashboard/save', async (req, res) => {
+  try {
+    const url = `${FLASK_TABLE_OPS_URL}/dashboard/save`;
+    const flaskRes = await undiciFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body || {}) });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) { const json = await flaskRes.json(); return res.status(flaskRes.status).json(json); }
+    const text = await flaskRes.text(); return res.status(flaskRes.status).send(text);
+  } catch (e) { console.error('dashboard save proxy failed', e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/dashboard/list', async (req, res) => {
+  try {
+    const qs = new URLSearchParams(); if (req.query.owner) qs.set('owner', req.query.owner);
+    const url = `${FLASK_TABLE_OPS_URL}/dashboard/list?${qs.toString()}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) { const json = await flaskRes.json(); return res.status(flaskRes.status).json(json); }
+    const text = await flaskRes.text(); return res.status(flaskRes.status).send(text);
+  } catch (e) { console.error('dashboard list proxy failed', e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/dashboard/get', async (req, res) => {
+  try {
+    const qs = new URLSearchParams(); if (req.query.name) qs.set('name', req.query.name); if (req.query.owner) qs.set('owner', req.query.owner);
+    const url = `${FLASK_TABLE_OPS_URL}/dashboard/get?${qs.toString()}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) { const json = await flaskRes.json(); return res.status(flaskRes.status).json(json); }
+    const text = await flaskRes.text(); return res.status(flaskRes.status).send(text);
+  } catch (e) { console.error('dashboard get proxy failed', e); res.status(500).json({ error: e.message }); }
+});
+
 // Full PDF export by re-running the query and rendering rows
 app.post('/api/download-pdf-query', async (req, res) => {
   try {

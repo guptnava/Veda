@@ -622,6 +622,18 @@ const HeaderBar = ({
 
         {/* Runtime metrics + controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 12 }}>
+          {/* Dashboard button */}
+          <button
+            type="button"
+            onClick={() => { try { const url = window.location.pathname + '?dashboard=1'; window.open(url, '_blank', 'noopener'); } catch {} }}
+            className="button-primary"
+            title="Open Dashboard Builder in a new tab"
+            aria-label="Open Dashboard Builder"
+            style={buttonStyle}
+          >
+            <img src={settingsIconUrl} alt="" aria-hidden="true" style={iconImgMd} />
+            <span>Dashboard</span>
+          </button>
           {/* ✅ CHANGED: training button with icon */}
           <button
             type="button"

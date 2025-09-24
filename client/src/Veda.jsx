@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import HeaderBar from './components/HeaderBar';
+import TableauStyleDashboard from './components/tableau_style_dashboard';
+import DashboardViewer from './components/DashboardViewer';
 import earthIcon from './icons/earth.jpg';
 import LeftPanel from './components/LeftPanel';
 import './Veda.css';
@@ -30,6 +32,31 @@ const components = {
 
 
 export default function App() {
+  // If dashboard mode (?dashboard=1), render the builder page
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('dashboard2') === '1') {
+      return (
+        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+          <TableauStyleDashboard />
+        </div>
+      );
+    }
+    if (params.get('dashboard') === '1') {
+      return (
+        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+          <TableauStyleDashboard />
+        </div>
+      );
+    }
+    if (params.get('dashboardView')) {
+      return (
+        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+          <DashboardViewer />
+        </div>
+      );
+    }
+  } catch {}
   const cleanStreamText = (s) => {
     try {
       // Normalize newlines, trim trailing spaces, and cap blank lines at 2
