@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import HeaderBar from './components/HeaderBar';
+import FooterBar from './components/FooterBar';
 import TableauStyleDashboard from './components/tableau_style_dashboard';
 import DashboardViewer from './components/DashboardViewer';
 import earthIcon from './icons/earth.jpg';
+import settingsGlyph from './icons/settings.svg';
+import chartGlyph from './icons/chart.svg';
+import chatboardGlyph from './icons/charttoggle.svg';
+import chatbookGlyph from './icons/text_widget.svg';
+import trainingGlyph from './icons/training.svg';
+import copyGlyph from './icons/copy.svg';
 import LeftPanel from './components/LeftPanel';
 import './Veda.css';
 import ReactMarkdown from 'react-markdown';
@@ -121,9 +128,27 @@ export default function App() {
   const lastColumnTypesRef = useRef(null);
   const [pushDownDb, setPushDownDb] = useState(false);
   const [logEnabled, setLogEnabled] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [isToolsetOpen, setIsToolsetOpen] = useState(false);
+  const toolsetPanelRef = useRef(null);
+  const [trainingUrl, setTrainingUrl] = useState(() => {
+    try {
+      const stored = localStorage.getItem('veda.trainingUrl');
+      if (stored) return stored;
+      const proto = window.location?.protocol || 'http:';
+      const host = window.location?.hostname || 'localhost';
+      return `${proto}//${host}:8501`;
+    } catch {
+      return 'http://localhost:8501';
+    }
+  });
   const activeAssistantIdRef = useRef(null);
   const [clobPreview, setClobPreview] = useState(8192);
   const [blobPreview, setBlobPreview] = useState(2048);
+
+  useEffect(() => {
+    try { if (trainingUrl) localStorage.setItem('veda.trainingUrl', trainingUrl); } catch {}
+  }, [trainingUrl]);
 
   // Load persisted performance settings
   useEffect(() => {
@@ -209,6 +234,25 @@ export default function App() {
   }, []);
   useEffect(() => { try { localStorage.setItem('veda.perf.maxClobPreview', String(clobPreview)); } catch {} }, [clobPreview]);
   useEffect(() => { try { localStorage.setItem('veda.perf.maxBlobPreview', String(blobPreview)); } catch {} }, [blobPreview]);
+  useEffect(() => {
+    if (!isToolsetOpen) return;
+    const onDown = (e) => {
+      if (toolsetPanelRef.current?.contains(e.target)) return;
+      setIsToolsetOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setIsToolsetOpen(false);
+    };
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [isToolsetOpen]);
+  useEffect(() => {
+    if (settingsMenuOpen) setIsToolsetOpen(false);
+  }, [settingsMenuOpen]);
   const [sendSqlToLlm, setSendSqlToLlm] = useState(false);
   const [tableButtonPermissions, setTableButtonPermissions] = useState({
     searchAndSorting: true,
@@ -673,11 +717,74 @@ export default function App() {
     setInteractionMode(historyItem.mode);
   };
 
+  const toggleToolsetPanel = () => {
+    setIsToolsetOpen((prev) => {
+      const next = !prev;
+      if (next) setSettingsMenuOpen(false);
+      return next;
+    });
+  };
+
+  const openDashboardBuilder = () => {
+    try {
+      const url = `${window.location.pathname}?dashboard=1`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
+  const openChatBoardViewer = () => {
+    try {
+      const url = `${window.location.pathname}?chatboard=1`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
+  const openChatbook = () => {
+    try {
+      const url = `${window.location.pathname}?chatbook=1`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
+  const openTrainingManager = () => {
+    try {
+      if (trainingUrl) window.open(trainingUrl, '_blank', 'noopener');
+    } catch {}
+  };
+
+  const toolsetButtonStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: '1px solid #343a46',
+    background: '#262930',
+    color: '#e2ebff',
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    transition: 'background 120ms ease, border 120ms ease',
+  };
+
+  const toolsetIconStyle = { width: 18, height: 18, display: 'block' };
+
+  const onToolsetHoverIn = (e) => {
+    e.currentTarget.style.background = '#30343d';
+    e.currentTarget.style.borderColor = '#3d4451';
+  };
+
+  const onToolsetHoverOut = (e) => {
+    e.currentTarget.style.background = '#262930';
+    e.currentTarget.style.borderColor = '#343a46';
+  };
+
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
       height: '100vh',
+      width: '100%',
       backgroundColor: '#1e1e1e',
       color: '#d4d4d4',
       fontFamily: 'Inter, sans-serif'
@@ -686,11 +793,6 @@ export default function App() {
   <HeaderBar
         isPanelOpen={isPanelOpen}
         onTogglePanel={() => setIsPanelOpen(prev => !prev)}
-        model={model}
-        onModelChange={setModel}
-        interactionMode={interactionMode}
-        onInteractionModeChange={setInteractionMode}
-        loading={loading}
         tableButtonPermissions={tableButtonPermissions}
         setTableButtonPermissions={setTableButtonPermissions}
         sendSqlToLlm={sendSqlToLlm}
@@ -715,9 +817,10 @@ export default function App() {
         setPushDownDb={setPushDownDb}
         logEnabled={logEnabled}
         setLogEnabled={setLogEnabled}
-        heapUsedMB={heapUsedMB}
-        rowsFetchedTotal={rowsFetchedTotal}
-        avgResponseTime={avgResponseTime}
+        trainingUrl={trainingUrl}
+        setTrainingUrl={setTrainingUrl}
+        settingsMenuOpen={settingsMenuOpen}
+        onSettingsMenuChange={setSettingsMenuOpen}
         updateIntervalMs={updateIntervalMs}
         setUpdateIntervalMs={setUpdateIntervalMs}
         minRowsPerUpdate={minRowsPerUpdate}
@@ -728,12 +831,6 @@ export default function App() {
         setBlobPreview={setBlobPreview}
         maxVisibleMessages={maxVisibleMessages}
         setMaxVisibleMessages={setMaxVisibleMessages}
-        onFreeContent={() => {
-          const keep = 1; // keep greeting only
-          setMessages(prev => prev.slice(0, keep));
-          setCurrentStreamingMessage(null);
-          // Optionally reduce fetched rows count since we dropped content; leave as-is to reflect session total
-        }}
       />
 
       <div style={{ flexGrow: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
@@ -754,8 +851,14 @@ export default function App() {
           commandHistory={commandHistory}
           onHistoryClick={handleHistoryClick}
           onUpdateHistory={(updater) => setCommandHistory(prev => (typeof updater === 'function' ? updater(prev) : updater))}
+          model={model}
+          onModelChange={setModel}
+          interactionMode={interactionMode}
+          onInteractionModeChange={setInteractionMode}
+          loading={loading}
         />
-        <main className="chat-scroll-area" aria-live="polite" aria-relevant="additions" tabIndex={-1}>
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minWidth: 0 }}>
+          <main className="chat-scroll-area" aria-live="polite" aria-relevant="additions" tabIndex={-1}>
           {visibleMessages
             .map((msg, index) => {
               const isUser = msg.role === 'user';
@@ -816,8 +919,13 @@ export default function App() {
                       className={`copy-button ${copiedIndex === index ? 'copied' : ''}`}
                       onClick={() => copyToClipboard(msg.content, index)}
                       aria-label="Copy assistant response to clipboard"
+                      type="button"
                     >
-                      {copiedIndex === index ? 'Copied!' : 'Copy'}
+                      {copiedIndex === index ? (
+                        'Copied!'
+                      ) : (
+                        <img src={copyGlyph} alt="" aria-hidden="true" />
+                      )}
                     </button>
                   )}
                   
@@ -873,8 +981,119 @@ export default function App() {
           )}
           <div ref={messagesEndRef} />
         </main>
+        <div style={{ flexShrink: 0, width: '100%', background: '#131417', borderTop: '1px solid #1f2024', padding: 0 }}>
+          <Composer inputRef={inputRef} loading={loading} onSubmit={sendMessage} onKeyDown={handleKeyDown} onStop={stopStreaming} />
+        </div>
       </div>
-      <Composer inputRef={inputRef} loading={loading} onSubmit={sendMessage} onKeyDown={handleKeyDown} onStop={stopStreaming} />
+      </div>
+      {isToolsetOpen && (
+        <div
+          ref={toolsetPanelRef}
+          style={{
+            position: 'fixed',
+            right: 24,
+            bottom: 86,
+            background: 'rgba(18,20,23,0.98)',
+            border: '1px solid rgba(44,54,66,0.7)',
+            borderRadius: 12,
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            minWidth: 220,
+            boxShadow: '0 18px 40px rgba(0,0,0,0.55)',
+            zIndex: 1500,
+          }}
+        >
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              setSettingsMenuOpen(true);
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={settingsGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Settings Menu
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              openDashboardBuilder();
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={chartGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Dashboard Builder
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              openChatBoardViewer();
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={chatboardGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              ChatBoard Viewer
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              openChatbook();
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={chatbookGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Chatbook
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              openTrainingManager();
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={trainingGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Training Manager
+            </span>
+          </button>
+        </div>
+      )}
+      <FooterBar
+        heapUsedMB={heapUsedMB}
+        rowsFetchedTotal={rowsFetchedTotal}
+        avgResponseTime={avgResponseTime}
+        onFreeContent={() => {
+          const keep = 1;
+          setMessages(prev => prev.slice(0, keep));
+          setCurrentStreamingMessage(null);
+        }}
+        onToggleToolset={toggleToolsetPanel}
+        toolsetActive={isToolsetOpen}
+      />
     </div>
   );
   // Load/persist virtualization settings

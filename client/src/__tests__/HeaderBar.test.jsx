@@ -1,19 +1,15 @@
 import { render, screen, fireEvent } from '@testing-library/react';
+import { vi, expect, test } from 'vitest';
 import HeaderBar from '../components/HeaderBar.jsx';
 
 function noop() {}
 
 test('renders HeaderBar and opens training manager', () => {
-  const openSpy = vi.spyOn(window, 'open');
+  const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
   render(
     <HeaderBar
       isPanelOpen={false}
       onTogglePanel={noop}
-      model="None"
-      onModelChange={noop}
-      interactionMode="direct"
-      onInteractionModeChange={noop}
-      loading={false}
       tableButtonPermissions={{}}
       setTableButtonPermissions={noop}
       sendSqlToLlm={false}
@@ -40,16 +36,24 @@ test('renders HeaderBar and opens training manager', () => {
       setVirtMaxClientRows={noop}
       virtRowHeight={24}
       setVirtRowHeight={noop}
-      heapUsedMB={123}
-      rowsFetchedTotal={456}
-      avgResponseTime={1.23}
-      onFreeContent={noop}
+      serverMode="client"
+      setServerMode={noop}
+      tableOpsMode="client"
+      setTableOpsMode={noop}
+      pushDownDb={false}
+      setPushDownDb={noop}
+      logEnabled={false}
+      setLogEnabled={noop}
+      trainingUrl="https://training.example.com"
+      setTrainingUrl={noop}
+      settingsMenuOpen
+      onSettingsMenuChange={noop}
     />
   );
 
+  fireEvent.click(screen.getByRole('button', { name: /training manager/i }));
   const btn = screen.getByRole('button', { name: /open training manager/i });
   fireEvent.click(btn);
   expect(openSpy).toHaveBeenCalled();
   openSpy.mockRestore();
 });
-

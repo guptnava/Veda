@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+
+  <!-- Outer container -->
+  <rect x="6" y="3" width="12" height="18" rx="2" ry="2" fill="none" stroke="#66caff" stroke-width="1.5" />
+
+  <!-- Vertical boxes inside -->
+  <rect x="8" y="5" width="8" height="3" fill="#00aaff" rx="1" />
+  <rect x="8" y="10" width="8" height="3" fill="#00aaff" rx="1" />
+  <rect x="8" y="15" width="8" height="3" fill="#00aaff" rx="1" />
+</svg>

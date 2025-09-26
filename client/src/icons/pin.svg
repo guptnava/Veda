@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+
+  <!-- Pin head (circle) -->
+  <circle cx="12" cy="8" r="4" fill="#ff3b3b" stroke="#ff6666" stroke-width="1.5" />
+
+  <!-- Pin stem -->
+  <path d="M12 12v6" stroke="#ff6666" stroke-width="1.5" stroke-linecap="round" />
+
+  <!-- Pin tip -->
+  <circle cx="12" cy="18" r="1" fill="#ff3b3b" />
+</svg>

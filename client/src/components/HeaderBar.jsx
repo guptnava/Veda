@@ -1,21 +1,11 @@
 // HeaderBar.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import vedaIcon from '../icons/aimesh.svg';
-
-// ✅ NEW: dummy icon imports (point these to your own files)
 import menuIcon from '../icons/hamburger.png';
-import settingsIcon from '../icons/settings.svg';
-import trainingIcon from '../icons/training.svg';
-import freeIcon from '../icons/broom.png';
 
 const HeaderBar = ({
   isPanelOpen,
   onTogglePanel,
-  model,
-  onModelChange,
-  interactionMode,
-  onInteractionModeChange,
-  loading,
   tableButtonPermissions,
   setTableButtonPermissions,
   sendSqlToLlm,
@@ -51,41 +41,31 @@ const HeaderBar = ({
   setPushDownDb,
   logEnabled,
   setLogEnabled,
-  heapUsedMB,
-  rowsFetchedTotal,
-  avgResponseTime,
-  onFreeContent,
+  trainingUrl,
+  setTrainingUrl,
+  settingsMenuOpen,
+  onSettingsMenuChange,
   title = 'InsightFlow',
   logoUrl = vedaIcon,
 
   // ✅ NEW: overridable icon URLs (use your own relative paths)
   toggleIconUrl = menuIcon,
-  settingsIconUrl = settingsIcon,
-  trainingIconUrl = trainingIcon,
-  freeIconUrl = freeIcon,
 }) => {
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettingsInternal, setShowSettingsInternal] = useState(false);
   const btnRef = useRef(null);
   const menuRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ right: 0, top: 0 });
-  const [trainingUrl, setTrainingUrl] = useState('');
   const [settingsTab, setSettingsTab] = useState('permissions'); // 'permissions' | 'narration' | 'training' | 'performance' | 'logging'
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('veda.trainingUrl');
-      if (stored) {
-        setTrainingUrl(stored);
-      } else {
-        const proto = window.location?.protocol || 'http:';
-        const host = window.location?.hostname || 'localhost';
-        setTrainingUrl(`${proto}//${host}:8501`);
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { if (trainingUrl) localStorage.setItem('veda.trainingUrl', trainingUrl); } catch {}
-  }, [trainingUrl]);
+  const isSettingsControlled = typeof settingsMenuOpen === 'boolean';
+  const showSettings = isSettingsControlled ? settingsMenuOpen : showSettingsInternal;
+  const updateShowSettings = (next) => {
+    const value = typeof next === 'function' ? next(showSettings) : next;
+    if (!isSettingsControlled) {
+      setShowSettingsInternal(value);
+    }
+    onSettingsMenuChange?.(value);
+  };
 
   useEffect(() => {
     try {
@@ -99,42 +79,8 @@ const HeaderBar = ({
   }, [sendSqlToLlm]);
 
   const baseFs = '0.85rem';
-  const controlHeight = 28;
-  const controlStyle = {
-    height: controlHeight,
-    padding: '0 10px',
-    fontSize: baseFs,
-    borderRadius: 8,
-    background: '#252526',
-    color: '#e6e6e6',
-    border: '1px solid #3a3a3a',
-  };
-  const buttonStyle = {
-    ...controlStyle,
-    background: '#0e639c',
-    border: '1px solid #1e5b86',
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    height: controlHeight,
-  };
-  const badgeStyle = {
-    height: controlHeight,
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '0 10px',
-    borderRadius: 8,
-    border: '1px solid #3a3a3a',
-    background: '#2b2b2b',
-    color: '#d4d4d4',
-    fontSize: baseFs,
-  };
-
   // ✅ NEW: consistent icon image styling
-  const iconImgSm = { width: 16, height: 16, display: 'block' };
-  const iconImgMd = { width: 18, height: 18, display: 'block' };
-  const iconImgLg = { width: 22, height: 22, display: 'block' };
+  const iconImgLg = { width: 18, height: 18, display: 'block' };
 
   useEffect(() => {
     if (!showSettings) return;
@@ -150,17 +96,19 @@ const HeaderBar = ({
     if (!showSettings) return;
     const onDown = (e) => {
       if (menuRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
-      setShowSettings(false);
+      updateShowSettings(false);
     };
+    const onScroll = () => updateShowSettings(false);
+    const onResize = () => updateShowSettings(false);
     window.addEventListener('mousedown', onDown, true);
-    window.addEventListener('scroll', () => setShowSettings(false), true);
-    window.addEventListener('resize', () => setShowSettings(false), true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize, true);
     return () => {
       window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('scroll', () => setShowSettings(false), true);
-      window.removeEventListener('resize', () => setShowSettings(false), true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize, true);
     };
-  }, [showSettings]);
+  }, [showSettings, updateShowSettings]);
 
   const perm = tableButtonPermissions || {};
   const togglePerm = (key) => setTableButtonPermissions?.((prev) => ({ ...prev, [key]: !prev?.[key] }));
@@ -169,12 +117,25 @@ const HeaderBar = ({
   const isInsightFlow = /insight\s*flow/i.test(brandText);
 
   return (
-    <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '10px 14px', background: '#0e639c'}}>
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+        padding: '6px 10px',
+        background: '#0e639c',
+        position: 'relative',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
       <style>{`
         @keyframes vedaShine { 0% { background-position: 0% 0; } 100% { background-position: 200% 0; } }
         @keyframes ringSpin { 0% { transform: rotate(0deg) } 100% { transform: rotate(360deg) } }
       `}</style>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         {/* ✅ CHANGED: icon-based toggle button */}
         <button
           onClick={onTogglePanel}
@@ -182,7 +143,7 @@ const HeaderBar = ({
             background: 'transparent',
             border: 'none',
             cursor: 'pointer',
-            padding: 4,
+            padding: 2,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -201,12 +162,12 @@ const HeaderBar = ({
           title="Veda"
           style={{
             position: 'relative',
-            width: 56,
-            height: 56,
+            width: 34,
+            height: 34,
             borderRadius: '50%',
-            padding: 2,
+            padding: 1,
             background: 'conic-gradient(from 0deg, #00c6ff 0%, #0072ff 30%, #00e5ff 60%, #00c6ff 100%)',
-            boxShadow: '0 0 10px rgba(0, 0, 0, 0.25), 0 0 18px rgba(14,99,156,0.45)',
+            boxShadow: '0 0 6px rgba(0, 0, 0, 0.25), 0 0 10px rgba(14,99,156,0.35)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -227,7 +188,7 @@ const HeaderBar = ({
               display: 'block',
               objectFit: 'cover',
               border: '1px solid rgba(255,255,255,0.12)',
-              boxShadow: 'inset 0 0 10px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35)',
+              boxShadow: 'inset 0 0 6px rgba(0,0,0,0.45), 0 1px 3px rgba(0,0,0,0.35)',
               filter: 'saturate(1.12) contrast(1.05)',
               transition: 'transform 180ms ease, box-shadow 180ms ease, filter 180ms ease',
             }}
@@ -238,7 +199,7 @@ const HeaderBar = ({
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
-              e.currentTarget.style.boxShadow = 'inset 0 0 10px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35)';
+              e.currentTarget.style.boxShadow = 'inset 0 0 6px rgba(0,0,0,0.45), 0 1px 3px rgba(0,0,0,0.35)';
               e.currentTarget.style.filter = 'saturate(1.12) contrast(1.05)';
             }}
           />
@@ -288,78 +249,21 @@ const HeaderBar = ({
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <label style={{ fontSize: baseFs, color: '#d4d4d4' }} htmlFor="model-select">Model:</label>
-        <select
-          id="model-select"
-          value={model}
-          onChange={(e) => onModelChange?.(e.target.value)}
-          disabled={loading}
-          aria-label="Select AI model"
-          style={controlStyle}
-        >
-          <option value="None">None</option>
-          <option value="dbLLM">Deutsche Bank - dbLLM</option>
-          <option value="llama3.2:1b">LLaMA3.2:1b</option>
-          <option value="codellama:7b-instruct">CodeLLaMA:7b-instruct</option>
-          <option value="sqlcoder">SQLCoder:7b</option>
-          <option value="gemma">Gemma</option>
-          <option value="llama3">LLaMA3</option>
-          <option value="mistral">Mistral</option>
-          <option value="phi3">Phi-3</option>
-        </select>
-
-        <label htmlFor="interaction-mode-select" style={{ marginLeft: 8, fontSize: baseFs, color: '#d4d4d4' }}>Agent:</label>
-        <select
-          id="interaction-mode-select"
-          value={interactionMode}
-          onChange={(e) => onInteractionModeChange?.(e.target.value)}
-          disabled={loading}
-          aria-label="Select interaction mode"
-          style={{ ...controlStyle, minWidth: 160, marginLeft: 4 }}
-        >
-          <option value="direct">Developer Assistant</option>
-          <option value="database">Database - Direct Intent Routes</option>
-          <option value="database1">Database - Direct Intent embeded nomodel Routes</option>
-          <option value="restful">API Assistant (Trained)</option>
-          <option value="langchain">Database Assistant (Un-Trained)</option>
-          <option value="langchainprompt">Database Assistant (Partially Trained)</option>
-          <option value="embedded">Database Assistant (Fully Trained)</option>
-          <option value="webscrape">Documentation Assistant</option>
-          <option value="riskdata">Data Analysis Assistant</option>
-          <option value="embedded_narrated">Database Assistant with Narration</option>
-          <option value="generic_rag">Database Assistant - Generic RAG</option>
-        </select>
-
-        <div style={{ position: 'relative' }}>
-          <button
-            ref={btnRef}
-            onClick={() => setShowSettings(v => !v)}
-            className="button-primary"
-            aria-expanded={showSettings}
-            aria-controls="hb-settings-menu"
-            title="Open settings"
-            style={buttonStyle}
+      <div ref={btnRef} style={{ position: 'relative', minHeight: 1, minWidth: 1 }}>
+        {showSettings && (
+          <div
+            id="hb-settings-menu"
+            ref={menuRef}
+            style={{
+              position: 'fixed',
+              top: menuPos.top, right: menuPos.right,
+              background: '#1f1f1f', border: '1px solid #444',
+              borderRadius: 8, padding: 10, zIndex: 100000,
+              display: 'flex', flexDirection: 'column', gap: 8,
+              width: 520, maxHeight: '70vh', overflow: 'auto',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
+            }}
           >
-            {/* ✅ CHANGED: settings icon */}
-            <img src={settingsIconUrl} alt="" aria-hidden="true" style={iconImgMd} />
-            <span>Settings</span>
-          </button>
-
-          {showSettings && (
-            <div
-              id="hb-settings-menu"
-              ref={menuRef}
-              style={{
-                position: 'fixed',
-                top: menuPos.top, right: menuPos.right,
-                background: '#1f1f1f', border: '1px solid #444',
-                borderRadius: 8, padding: 10, zIndex: 100000,
-                display: 'flex', flexDirection: 'column', gap: 8,
-                width: 520, maxHeight: '70vh', overflow: 'auto',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
-              }}
-            >
               {/* settings tabs unchanged */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
                 {[
@@ -616,62 +520,8 @@ const HeaderBar = ({
                   </div>
                 </div>
               )}
-            </div>
-          )}
-        </div>
-
-        {/* Runtime metrics + controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 12 }}>
-          {/* Dashboard button */}
-          <button
-            type="button"
-            onClick={() => { try { const url = window.location.pathname + '?dashboard=1'; window.open(url, '_blank', 'noopener'); } catch {} }}
-            className="button-primary"
-            title="Open Dashboard Builder in a new tab"
-            aria-label="Open Dashboard Builder"
-            style={buttonStyle}
-          >
-            <img src={settingsIconUrl} alt="" aria-hidden="true" style={iconImgMd} />
-            <span>Dashboard</span>
-          </button>
-          {/* ✅ CHANGED: training button with icon */}
-          <button
-            type="button"
-            onClick={() => { try { window.open(trainingUrl, '_blank', 'noopener'); } catch {} }}
-            className="button-primary"
-            title="Open Training Manager in a new tab"
-            aria-label="Open Training Manager"
-            style={buttonStyle}
-          >
-            <img src={trainingIconUrl} alt="" aria-hidden="true" style={{
-  
-            }} />
-            <span>Training Manager</span>
-          </button>
-
-          <span title="JS heap used" style={badgeStyle}>
-            RAM: {heapUsedMB ?? '—'} MB
-          </span>
-          <span title="Total rows fetched across responses" style={badgeStyle}>
-            Rows: {rowsFetchedTotal}
-          </span>
-          <span title="Average response time" style={badgeStyle}>
-            Avg: {Number.isFinite(avgResponseTime) ? `${avgResponseTime.toFixed(2)}s` : '—'}
-          </span>
-
-          {/* ✅ CHANGED: free button with icon */}
-          <button
-            type="button"
-            onClick={onFreeContent}
-            className="button-primary"
-            title="Free previous content to reduce memory"
-            aria-label="Free previous content"
-            style={{ ...buttonStyle, background: '#a33', border: '1px solid #773' }}
-          >
-            <img src={freeIconUrl} alt="" aria-hidden="true" style={iconImgSm} />
-            <span>Free</span>
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </header>
   );

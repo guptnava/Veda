@@ -1,13 +1,15 @@
 import React, { useMemo, useState, useRef } from 'react';
-import IconClear from '../icons/clear.svg';
+import IconClear from '../icons/delete.png';
 import IconDownload from '../icons/download.svg';
 import IconUpload from '../icons/upload.svg';
+import IconHistory from '../icons/history.svg';
 
 
 // Icon placeholders (replace with your own paths or pass via props)
 const ICON_CLEAR = IconClear;
 const ICON_DOWNLOAD = IconDownload;
 const ICON_UPLOAD = IconUpload;
+const ICON_HISTORY = IconHistory;
 
 const VerticalSlider = ({ label, value, ...props }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', fontFamily: 'monospace', fontSize: '0.75rem' }}>
@@ -32,6 +34,11 @@ const LeftPanel = ({
   commandHistory,
   onHistoryClick,
   onUpdateHistory,
+  model,
+  onModelChange,
+  interactionMode,
+  onInteractionModeChange,
+  loading,
   // Optional: override icon URLs
   clearIconUrl = ICON_CLEAR,
   downloadIconUrl = ICON_DOWNLOAD,
@@ -45,36 +52,125 @@ const LeftPanel = ({
     setCosineSimilarityThreshold(0.58);
   };
 
+  const selectStyle = {
+    width: '100%',
+    height: 32,
+    padding: '0 10px',
+    fontSize: '0.85rem',
+    borderRadius: 8,
+    background: '#1f1f1f',
+    color: '#e6e6e6',
+    border: '1px solid #3a3a3a',
+  };
+
+  const sectionStyle = {
+    border: '2px solid #3f4a5a',
+    borderRadius: 12,
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 0 rgba(0,0,0,0.4)',
+    padding: '14px 12px',
+    background: '#1f1f1f',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  };
+
+  const sectionHeaderStyle = {
+    margin: 0,
+    fontSize: '0.9rem',
+    fontWeight: 600,
+    color: '#e3ecff',
+    letterSpacing: '0.015em',
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', padding: isPanelOpen ? '16px' : '0', backgroundColor: '#252526', color: '#d4d4d4', transition: 'width 0.3s ease-in-out', width: isPanelOpen ? '288px' : '0', overflowX: 'hidden', overflowY: 'auto', scrollbarGutter: 'stable both-edges', WebkitOverflowScrolling: 'touch', flexShrink: 0, borderRight: isPanelOpen ? '1px solid #444' : 'none', height: '100%' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flex: '1', overflow: 'visible', minHeight: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexShrink: 0 }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>Settings</h2>
+        <div style={{ ...sectionStyle, marginBottom: 18 }}>
+          <h3 style={sectionHeaderStyle}>Model &amp; Agent</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label htmlFor="leftpanel-model-select" style={{ fontSize: '0.85rem', color: '#d4d4d4' }}>Model</label>
+            <select
+              id="leftpanel-model-select"
+              value={model}
+              onChange={(e) => onModelChange?.(e.target.value)}
+              disabled={loading}
+              style={selectStyle}
+            >
+              <option value="None">None</option>
+              <option value="dbLLM">Deutsche Bank - dbLLM</option>
+              <option value="llama3.2:1b">LLaMA3.2:1b</option>
+              <option value="codellama:7b-instruct">CodeLLaMA:7b-instruct</option>
+              <option value="sqlcoder">SQLCoder:7b</option>
+              <option value="gemma">Gemma</option>
+              <option value="llama3">LLaMA3</option>
+              <option value="mistral">Mistral</option>
+              <option value="phi3">Phi-3</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label htmlFor="leftpanel-agent-select" style={{ fontSize: '0.85rem', color: '#d4d4d4' }}>Agent</label>
+            <select
+              id="leftpanel-agent-select"
+              value={interactionMode}
+              onChange={(e) => onInteractionModeChange?.(e.target.value)}
+              disabled={loading}
+              style={selectStyle}
+            >
+              <option value="direct">Developer Assistant</option>
+              <option value="database">Database - Direct Intent Routes</option>
+              <option value="database1">Database - Direct Intent embeded nomodel Routes</option>
+              <option value="restful">API Assistant (Trained)</option>
+              <option value="langchain">Database Assistant (Un-Trained)</option>
+              <option value="langchainprompt">Database Assistant (Partially Trained)</option>
+              <option value="embedded">Database Assistant (Fully Trained)</option>
+              <option value="webscrape">Documentation Assistant</option>
+              <option value="riskdata">Data Analysis Assistant</option>
+              <option value="embedded_narrated">Database Assistant with Narration</option>
+              <option value="generic_rag">Database Assistant - Generic RAG</option>
+            </select>
+          </div>
         </div>
 
-        <hr style={{ borderTop: '1px solid #444', margin: '0 0 16px 0', flexShrink: 0 }} />
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-around', gap: '16px', padding: '10px 0', flexShrink: 0, flex: 1 }}>
+        <div style={{ ...sectionStyle, marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <h3 style={sectionHeaderStyle}>Generation Controls</h3>
+            <button
+              onClick={resetSliders}
+              title="Reset sliders"
+              aria-label="Reset sliders to defaults"
+              style={{
+                padding: '4px 6px',
+                borderRadius: 6,
+                border: '1px solid #4a5669',
+                background: '#1d2026',
+                color: '#dbe6ff',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                lineHeight: 1,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#263042';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#1d2026';
+              }}
+            >↺</button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-around', gap: '16px', paddingTop: 4, flexShrink: 0, flex: 1 }}>
             <VerticalSlider label="Temp" id="temperature" min="0" max="1" step="0.1" value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value))} />
             <VerticalSlider label="Top K" id="topK" min="1" max="100" step="1" value={topK} onChange={(e) => setTopK(parseInt(e.target.value))} />
             <VerticalSlider label="Top P" id="topP" min="0" max="1" step="0.1" value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))} />
             <VerticalSlider label="Cosine" id="cosine-similarity" min="0" max="1" step="0.01" value={cosineSimilarityThreshold} onChange={(e) => setCosineSimilarityThreshold(parseFloat(e.target.value))} />
           </div>
-          <button
-            onClick={resetSliders}
-            title="Reset sliders"
-            aria-label="Reset sliders to defaults"
-            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #444', background: '#2d2d2d', color: '#ddd', cursor: 'pointer' }}
-          >↺</button>
         </div>
 
-        {/* Settings control moved to header menu; no extra buttons here */}
-
         {commandHistory && (
-          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minHeight: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 'bold', marginBottom: '4px' }}>History</h3>
+          <div style={{ ...sectionStyle, flex: 1.4, minHeight: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <h3 style={sectionHeaderStyle}>History</h3>
               <HistoryActions
                 history={commandHistory}
                 onUpdateHistory={onUpdateHistory}
@@ -83,7 +179,7 @@ const LeftPanel = ({
                 uploadIconUrl={uploadIconUrl}
               />
             </div>
-            <HistorySection history={commandHistory} onHistoryClick={onHistoryClick} />
+            <HistorySection history={commandHistory} onHistoryClick={onHistoryClick} historyIconUrl={ICON_HISTORY} />
           </div>
         )}
       </div>
@@ -97,7 +193,7 @@ const LeftPanel = ({
 
 // Settings helpers removed (menu moved to HeaderBar)
 
-const HistorySection = ({ history, onHistoryClick }) => {
+const HistorySection = ({ history, onHistoryClick, historyIconUrl = ICON_HISTORY }) => {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     if (!Array.isArray(history)) return [];
@@ -130,15 +226,35 @@ const HistorySection = ({ history, onHistoryClick }) => {
           filtered.map((item, idx) => (
             <button
               key={idx}
-              className="button-primary"
+              type="button"
               onClick={() => onHistoryClick?.(item)}
               title={item.command}
               style={{
-                background: '#3d3d3d', border: '1px solid #555', color: '#d4d4d4', fontFamily: 'monospace',
-                textAlign: 'left', whiteSpace: 'nowrap'
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                borderRadius: 6,
+                border: '1px solid transparent',
+                background: 'transparent',
+                color: '#cfd7ea',
+                fontFamily: 'monospace',
+                fontSize: '0.72rem',
+                textAlign: 'left',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#2d3036';
+                e.currentTarget.style.borderColor = '#3b4452';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderColor = 'transparent';
               }}
             >
-              {item.command}
+              <img src={historyIconUrl} alt="" aria-hidden="true" style={{ width: 14, height: 14, display: 'block', opacity: 0.85 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.command}</span>
             </button>
           ))
         )}

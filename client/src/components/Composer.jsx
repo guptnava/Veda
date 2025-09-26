@@ -15,7 +15,12 @@ const Composer = ({ inputRef, loading, onSubmit, onKeyDown, onStop }) => {
         rows={3}
       />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button type="submit" className="button-primary" style={{ minWidth: '100px' }} disabled={loading}>
+        <button
+          type="submit"
+          className="button-primary"
+          style={{ minWidth: '110px', minHeight: '52px' }}
+          disabled={loading}
+        >
           {loading ? 'Loading...' : 'Send'}
         </button>
         {loading && (

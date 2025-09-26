@@ -1,6 +1,6 @@
 * { box-sizing: border-box; }
-body, html, #root { margin: 0; padding: 0; height: 100%; background-color: #1e1e1e; color: #d4d4d4; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
-.chat-scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px; padding-top: 80px; padding-bottom: 120px; scrollbar-width: thin; scrollbar-color: #0e639c transparent; display: flex; flex-direction: column; }
+body, html, #root { margin: 0; padding: 0; height: 100%; width: 100%; background-color: #1e1e1e; color: #d4d4d4; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+.chat-scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px 0; scrollbar-width: thin; scrollbar-color: #0e639c transparent; display: flex; flex-direction: column; }
 .chat-scroll-area::-webkit-scrollbar { width: 8px; }
 .chat-scroll-area::-webkit-scrollbar-thumb { background-color: #0e639c; border-radius: 4px; }
 .table-container {
@@ -35,21 +35,23 @@ header > div:last-child, header > div:nth-child(3) { display: flex; align-items:
 label { user-select: none; }
 select { padding: 6px 12px; font-size: 1rem; border-radius: 6px; background: #252526; color: #d4d4d4; border: 1px solid #444; min-width: 140px; cursor: pointer; }
 select:disabled { cursor: not-allowed; opacity: 0.7; }
-form { display: flex; gap: 12px; padding: 16px 24px; background-color: #0e639c; position: fixed; bottom: 0; left: 0; width: 100%; box-sizing: border-box; border-top: 2px solid #084c75; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; max-height: 150px; z-index: 10; }
-textarea { flex: 1; resize: vertical; min-height: 80px; max-height: 150px; padding: 10px; font-size: 1rem; border-radius: 6px; border: none; background-color: #1e1e1e; color: #d4d4d4; font-family: monospace; }
+form { display: flex; gap: 12px; padding: 8px 16px; background-color: #0e639c; width: 100%; box-sizing: border-box; border-top: 2px solid #084c75; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; max-height: 90px; align-items: flex-start; }
+textarea { flex: 1; resize: vertical; min-height: 48px; max-height: 90px; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: none; background-color: #1e1e1e; color: #d4d4d4; font-family: monospace; }
 textarea:disabled { background-color: #2d2d2d; color: #777; cursor: not-allowed; }
-.button-primary { padding: 8px 16px; font-size: 0.95rem; border-radius: 6px; border: 1px solid #084c75; background: linear-gradient(180deg, #1177d1 0%, #0e639c 100%); color: white; cursor: pointer; user-select: none; font-weight: 500; box-shadow: 0 44px 10px rgba(0,0,0,0.2); transition: all 0.2s ease; flex-shrink: 0; display: flex; align-items: center; }
+.button-primary { padding: 10px 18px; font-size: 0.95rem; border-radius: 6px; border: 1px solid #084c75; background: linear-gradient(180deg, #1177d1 0%, #0e639c 100%); color: white; cursor: pointer; user-select: none; font-weight: 500; box-shadow: 0 44px 10px rgba(0,0,0,0.2); transition: all 0.2s ease; flex-shrink: 0; display: flex; align-items: center; justify-content: center; min-height: 44px; }
 .button-primary:hover:not(:disabled) { background: linear-gradient(180deg, #1283e3 0%, #1177d1 100%); transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0,0,0,0.3); }
 .button-primary:disabled { background: #3a3d41; border-color: #333; cursor: not-allowed; box-shadow: none; opacity: 0.7; transform: none; }
 .button-icon { background: none; border: none; color: #d4d4d4; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color 0.2s; padding: 4px; border-radius: 4px; }
 .button-icon:hover { color: #0e639c; }
-.message { padding: 12px 16px; border-radius: 20px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; width: 100%; flex-shrink: 0; position: relative; }
+.message { padding: 6px 14px; border-radius: 20px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; width: 100%; flex-shrink: 0; position: relative; }
 .user { background-color: #0a5a0a; color: #c8ffc8; align-self: flex-end; border-bottom-right-radius: 4px; border-bottom-left-radius: 20px; border-top-left-radius: 20px; border-top-right-radius: 20px; }
-.assistant { background-color: #252526; color: #d4d4d4; align-self: flex-start; border-bottom-left-radius: 4px; border-bottom-right-radius: 20px; border-top-left-radius: 20px; border-top-right-radius: 20px; padding-top: 28px; }
+.assistant { background-color: #252526; color: #d4d4d4; align-self: flex-start; border-bottom-left-radius: 4px; border-bottom-right-radius: 20px; border-top-left-radius: 20px; border-top-right-radius: 20px; padding-top: 20px; }
 .assistant.greeting { max-width: 100%; white-space: nowrap; }
-.copy-button { background: none; border: none; color: #0e639c; cursor: pointer; font-weight: 600; font-size: 0.9rem; padding: 0; position: absolute; bottom: 8px; right: 12px; user-select: none; }
-.copy-button:hover { text-decoration: underline; }
+.copy-button { background: none; border: none; color: #0e639c; cursor: pointer; font-weight: 600; font-size: 0.85rem; padding: 4px; position: absolute; bottom: 8px; right: 12px; user-select: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; transition: background 0.2s ease, color 0.2s ease; }
+.copy-button img { width: 18px; height: 18px; display: block; }
+.copy-button:hover { background: rgba(14, 99, 156, 0.12); }
 .copy-button.copied { color: #6a9955; cursor: default; }
+.copy-button.copied:hover { background: none; }
 .response-time { margin-top: 4px; font-size: 0.75rem; color: #888; font-style: italic; }
 .model-label { position: absolute; top: 8px; left: 16px; font-size: 0.75rem; font-weight: 600; color: #0e639c; user-select: none; }
 .toggle-switch { position: relative; display: inline-block; width: 40px; height: 24px; cursor: pointer; }

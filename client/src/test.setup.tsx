@@ -1,4 +1,7 @@
-import '@testing-library/jest-dom';
+import { expect } from 'vitest';
+import * as matchers from '@testing-library/jest-dom/matchers';
+
+expect.extend(matchers);
 
 // Polyfills/mocks for tests
 if (!window.matchMedia) {
@@ -16,4 +19,3 @@ if (!window.matchMedia) {
 if (!window.open) {
   window.open = () => null as unknown as Window;
 }
-
