@@ -17,6 +17,7 @@ import IconMaximize from '../icons/maximize.svg';
 import IconRestore from '../icons/restore.svg';
 import IconSave from '../icons/save.svg';
 import IconLoad from '../icons/load.svg';
+import IconPin from '../icons/pin.svg';
 // Fallback save icon (using existing format icon if no save asset)
 
 
@@ -39,6 +40,7 @@ const ICON_MAXIMIZE = IconMaximize;
 const ICON_RESTORE = IconRestore;
 const ICON_SAVE = IconSave;
 const ICON_LOAD = IconLoad;
+const ICON_PIN = IconPin;
 
 // Generic toolbar icon button
 const ToolbarButton = ({ icon, alt, title, onClick, active, disabled }) => (
@@ -339,7 +341,7 @@ const DerivedPicker = ({ baseHeaders, derivedCols, setDerivedCols, useFixed = tr
   );
 };
 
-const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false }) => {
+const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null }) => {
   const [sortConfig, setSortConfig] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleColumns, setVisibleColumns] = useState([]);
@@ -398,7 +400,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const filterRef = useRef(null);
   const formatsRef = useRef(null);
   const [chartVisible, setChartVisible] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(initialMaximized);
   const isVirtualized = isMaximized && !!virtualizeOnMaximize;
   const prevLayoutRef = useRef({ pageSize: initialPageSize });
   const [chartPickerOpen, setChartPickerOpen] = useState(false);
@@ -409,6 +411,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const [showFormatsPanel, setShowFormatsPanel] = useState(false);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [showAdvancedPicker, setShowAdvancedPicker] = useState(false);
+  const [isPinning, setIsPinning] = useState(false);
   // Popover anchors for toolbar icons (right-aligned to icon)
   const [anchorCols, setAnchorCols] = useState(null);
   const [anchorFilters, setAnchorFilters] = useState(null);
@@ -563,13 +566,16 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   
 
   // Choose rows sample for headers depending on server mode
-  const baseRowsForHeaders = (serverMode && Array.isArray(serverRows) && serverRows.length > 0) ? serverRows : data;
-  if (!baseRowsForHeaders || baseRowsForHeaders.length === 0) {
+  const rawRowsForHeaders = (serverMode && Array.isArray(serverRows) && serverRows.length > 0) ? serverRows : data;
+  let baseHeaders = [];
+  if (rawRowsForHeaders && rawRowsForHeaders.length > 0) {
+    baseHeaders = Object.keys(rawRowsForHeaders[0] || {});
+  } else if (initialSchema && Array.isArray(initialSchema.headers) && initialSchema.headers.length > 0) {
+    baseHeaders = [...initialSchema.headers];
+  } else {
     return <div style={{ color: "#aaa", padding: "10px" }}>No data to display.</div>;
   }
-
-  // Base headers from incoming or server rows
-  const baseHeaders = Object.keys(baseRowsForHeaders[0] || {});
+  const baseRowsForHeaders = rawRowsForHeaders || [];
 
   // Helper: bucket/grain header names from config
   const bucketHeaderFor = (col, cfg) => {
@@ -583,9 +589,48 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     const extra = derivedCols.filter(c => c.enabled !== false && c.name).map(c => c.name);
     const bucketExtras = Object.entries(pivotBins || {}).map(([col, cfg]) => bucketHeaderFor(col, cfg)).filter(Boolean);
     return [...baseHeaders, ...extra, ...bucketExtras];
-  }, [baseHeaders, derivedCols, JSON.stringify(pivotBins)]);
+  }, [baseHeaders.join('|'), derivedCols, JSON.stringify(pivotBins)]);
+
+  const initialViewAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!initialViewState || initialViewAppliedRef.current) return;
+    initialViewAppliedRef.current = true;
+    try {
+      if (Array.isArray(initialViewState.visibleColumns)) {
+        const filtered = initialViewState.visibleColumns.filter((h) => headers.includes(h));
+        setVisibleColumns(filtered.length ? filtered : headers);
+      }
+      if (Array.isArray(initialViewState.sortConfig)) setSortConfig(initialViewState.sortConfig);
+      if (typeof initialViewState.searchQuery === 'string') setSearchQuery(initialViewState.searchQuery);
+      if (initialViewState.searchMode) setSearchMode(initialViewState.searchMode);
+      if (typeof initialViewState.searchCaseSensitive === 'boolean') setSearchCaseSensitive(initialViewState.searchCaseSensitive);
+      if (typeof initialViewState.searchVisibleOnly === 'boolean') setSearchVisibleOnly(initialViewState.searchVisibleOnly);
+      if (initialViewState.colFilters && typeof initialViewState.colFilters === 'object') setColFilters(initialViewState.colFilters);
+      if (initialViewState.valueFilters && typeof initialViewState.valueFilters === 'object') setValueFilters(initialViewState.valueFilters);
+      if (Array.isArray(initialViewState.advFilters)) setAdvFilters(initialViewState.advFilters);
+      if (typeof initialViewState.advCombine === 'string') setAdvCombine(initialViewState.advCombine);
+      if (Array.isArray(initialViewState.derivedCols)) setDerivedCols(initialViewState.derivedCols);
+      if (initialViewState.pivotConfig && typeof initialViewState.pivotConfig === 'object') {
+        setPivotConfig((prev) => ({ ...prev, ...initialViewState.pivotConfig }));
+      }
+      if (Array.isArray(initialViewState.pivotCalcMeasures)) setPivotCalcMeasures(initialViewState.pivotCalcMeasures);
+      if (initialViewState.pivotBins && typeof initialViewState.pivotBins === 'object') setPivotBins(initialViewState.pivotBins);
+      if (Array.isArray(initialViewState.pivotCollapsed)) setPivotCollapsed(new Set(initialViewState.pivotCollapsed));
+      if (initialViewState.colFormats && typeof initialViewState.colFormats === 'object') setColFormats(initialViewState.colFormats);
+      if (typeof initialViewState.freezeCount === 'number') setFreezeCount(initialViewState.freezeCount);
+      if (Array.isArray(initialViewState.columnOrder)) setColumnOrder(initialViewState.columnOrder);
+      if (Array.isArray(initialViewState.condRules)) setCondRules(initialViewState.condRules);
+      if (typeof initialViewState.pageSize === 'number' && initialViewState.pageSize > 0) setPageSize(initialViewState.pageSize);
+      if (typeof initialViewState.fontSize === 'number' && initialViewState.fontSize > 0) setFontSize(initialViewState.fontSize);
+      if (typeof initialViewState.isPivotView === 'boolean') setIsPivotView(initialViewState.isPivotView);
+    } catch (err) {
+      console.error('Apply initial view state failed', err);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialViewState, headers.join('|')]);
 
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     // Try restore visible columns; default to all columns
     const visKey = `table.visibleColumns.${baseHeaders.join('|')}`;
     try {
@@ -723,6 +768,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   // (Deliberately not persisting page size or font size to avoid conflicts with parent props)
   // Persist conditional formatting rules per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.condRules.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -749,6 +795,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist derived columns per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.derived.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -782,6 +829,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist per-column filters per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.colFilters.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -799,6 +847,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist summary row visibility per dataset signature (default hidden)
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.showSummary.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -813,6 +862,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist advanced filters and search preferences
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.advFilters.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -828,6 +878,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     try { localStorage.setItem(key, JSON.stringify(advFilters)); } catch {}
   }, [advFilters, baseHeaders]);
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.advCombine.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -840,6 +891,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     try { localStorage.setItem(key, String(advCombine)); } catch {}
   }, [advCombine, baseHeaders]);
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.searchPrefs.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -861,6 +913,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist value filters per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.valueFilters.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -878,6 +931,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist pivot row styles per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.pivotStyle.${baseHeaders.join('|')}`;
     try {
       const stored = localStorage.getItem(key);
@@ -895,6 +949,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist column layout + formats per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const prefKey = (name) => `table.${name}.${baseHeaders.join('|')}`;
     try {
       const w = localStorage.getItem(prefKey('colWidths'));
@@ -1319,8 +1374,18 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
         set.add(h);
       }
     });
+    if (set.size === 0 && initialSchema && initialSchema.columnTypes) {
+      try {
+        Object.entries(initialSchema.columnTypes).forEach(([col, typ]) => {
+          const t = String(typ || '').toLowerCase();
+          if (['number', 'numeric', 'float', 'double', 'decimal', 'integer', 'int'].some((kw) => t.includes(kw))) {
+            set.add(col);
+          }
+        });
+      } catch {}
+    }
     return set;
-  }, [headers, withDerived, sortedData, isPivotView]);
+  }, [headers.join('|'), withDerived, sortedData, isPivotView, initialSchema]);
 
   // charts are handled by ChartPanel (lazy-loaded)
 
@@ -1691,6 +1756,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
 
   // Persist pivot collapsed, calc measures, and bins per dataset signature
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.pivotCollapsed.${baseHeaders.join('|')}`;
     try {
       const s = localStorage.getItem(key);
@@ -1703,6 +1769,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     try { localStorage.setItem(key, JSON.stringify(Array.from(pivotCollapsed))); } catch {}
   }, [pivotCollapsed, baseHeaders]);
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.pivotCalcMeasures.${baseHeaders.join('|')}`;
     try {
       const s = localStorage.getItem(key);
@@ -1718,6 +1785,7 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     try { localStorage.setItem(key, JSON.stringify(pivotCalcMeasures)); } catch {}
   }, [pivotCalcMeasures, baseHeaders]);
   useEffect(() => {
+    if (initialViewAppliedRef.current) return;
     const key = `table.pivotBins.${baseHeaders.join('|')}`;
     try {
       const s = localStorage.getItem(key);
@@ -2324,30 +2392,46 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
   const disabledStyle = { pointerEvents: 'none', opacity: 0.6, cursor: 'not-allowed' };
   const allDisabled = !!buttonsDisabled;
 
+
+  const collectViewState = () => ({
+    visibleColumns,
+    sortConfig,
+    colFilters,
+    valueFilters,
+    advFilters,
+    advCombine,
+    derivedCols,
+    pivotConfig,
+    pivotCalcMeasures,
+    pivotBins,
+    pivotCollapsed: Array.from(pivotCollapsed || []),
+    colFormats,
+    freezeCount,
+    columnOrder,
+    condRules,
+    rowLabelsMode: pivotConfig && pivotConfig.rowLabelsMode,
+    exportContext,
+    tableOpsMode,
+    pushDownDb,
+    searchQuery,
+    searchMode,
+    searchCaseSensitive,
+    searchVisibleOnly,
+    pageSize,
+    fontSize,
+    isPivotView,
+    serverMode,
+    headers,
+    totalRows,
+  });
+
   // Helper to save current view to backend (Oracle)
   const saveCurrentView = async () => {
     try {
       const name = window.prompt('Enter a name for this view');
       if (!name) return;
       const datasetSig = baseHeaders.join('|');
-      const viewState = {
-        visibleColumns,
-        sortConfig,
-        colFilters,
-        valueFilters,
-        advFilters,
-        advCombine,
-        derivedCols,
-        pivotConfig,
-        colFormats,
-        freezeCount,
-        columnOrder,
-        condRules,
-        rowLabelsMode: pivotConfig && pivotConfig.rowLabelsMode,
-        exportContext,
-        tableOpsMode,
-        pushDownDb,
-      };
+      const viewState = collectViewState();
       const res = await fetch('/api/table/save_view', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2368,6 +2452,71 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
     } catch (e) {
       console.error('Save view failed', e);
       alert('Failed to save view. See console for details.');
+    }
+  };
+
+  const pinCurrentView = async () => {
+    if (isPinning) return;
+    try {
+      setIsPinning(true);
+      const datasetSig = baseHeaders.join('|');
+      const viewState = collectViewState();
+      const schema = {
+        headers,
+        columnTypes: exportContext && exportContext.columnTypes ? exportContext.columnTypes : (initialSchema && initialSchema.columnTypes) || null,
+      };
+      const options = {
+        initialPageSize: pageSize,
+        initialFontSize: fontSize,
+        buttonPermissions: perm,
+        perfOptions,
+        previewOptions,
+        exportContext,
+        totalRows,
+        serverMode,
+        tableOpsMode,
+        pushDownDb,
+        virtualizeOnMaximize: true,
+        virtualRowHeight,
+        initialSchema: schema,
+      };
+      const payload = {
+        datasetSig,
+        state: viewState,
+        options,
+        schema,
+        query: {
+          exportContext,
+          tableOpsMode,
+          pushDownDb,
+        },
+      };
+      const res = await fetch('/api/table/pin_view', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      let resp = null;
+      const ct = res.headers.get('content-type') || '';
+      try {
+        resp = ct.includes('application/json') ? await res.json() : await res.text();
+      } catch (e) {
+        resp = null;
+      }
+      if (!res.ok || !resp || !resp.pinId) {
+        const msg = resp && resp.error ? resp.error : (typeof resp === 'string' ? resp : `HTTP ${res.status}`);
+        throw new Error(msg);
+      }
+      if (typeof window !== 'undefined') {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('pinnedId', resp.pinId);
+        window.open(nextUrl.toString(), '_blank', 'noopener');
+      }
+    } catch (e) {
+      console.error('Pin view failed', e);
+      alert('Failed to pin view. See console for details.');
+    } finally {
+      setIsPinning(false);
     }
   };
 
@@ -2466,6 +2615,15 @@ const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize
           active={false}
           disabled={allDisabled}
           onClick={saveCurrentView}
+        />
+        {/* Pin View */}
+        <ToolbarButton
+          icon={ICON_PIN}
+          alt="Pin View"
+          title={isPinning ? 'Saving current view…' : 'Pin current view'}
+          active={!!isPinning}
+          disabled={allDisabled || isPinning}
+          onClick={pinCurrentView}
         />
         {/* Load View */}
         <ToolbarButton

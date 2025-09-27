@@ -200,7 +200,7 @@ export default function TableauStyleDashboard() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0b0b0b' }}>
       <HeaderBar
-        title="C.Board"
+        title="Dashboard Builder"
         isPanelOpen={hbPanelOpen}
         onTogglePanel={() => setHbPanelOpen(v => !v)}
         model={hbModel}

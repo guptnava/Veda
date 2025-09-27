@@ -14,6 +14,7 @@ from functools import lru_cache
 import time
 import json
 import os
+import uuid
 import requests
 import oracledb
 from dotenv import load_dotenv
@@ -446,6 +447,46 @@ def _ensure_views_table(conn):
         app.logger.warning(f"Ensure views table failed: {e}")
 
 
+def _ensure_pins_table(conn):
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name FROM user_tables WHERE table_name = 'VEDA_PINNED_VIEWS'
+        """)
+        if not cur.fetchone():
+            cur.execute("""
+                CREATE TABLE VEDA_PINNED_VIEWS (
+                  PIN_ID              VARCHAR2(64) PRIMARY KEY,
+                  DATASET_SIG         VARCHAR2(4000),
+                  OWNER_NAME          VARCHAR2(200),
+                  CREATED_AT          TIMESTAMP DEFAULT SYSTIMESTAMP,
+                  EXPIRES_AT          TIMESTAMP,
+                  ROW_COUNT           NUMBER,
+                  ORIGINAL_ROW_COUNT  NUMBER,
+                  TRUNCATED           NUMBER(1),
+                  CONTENT             CLOB,
+                  VIEW_STATE          CLOB,
+                  OPTIONS             CLOB
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX VEDA_PINNED_VIEWS_EXPIRE_IDX ON VEDA_PINNED_VIEWS (EXPIRES_AT)
+            """)
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f"Ensure pinned table failed: {e}")
+
+
+def _cleanup_expired_pins(cur):
+    try:
+        cur.execute("DELETE FROM VEDA_PINNED_VIEWS WHERE EXPIRES_AT IS NOT NULL AND EXPIRES_AT < SYSTIMESTAMP")
+    except Exception as e:
+        app.logger.warning(f"Cleanup pinned views failed: {e}")
+
+
+DEFAULT_PIN_TTL_MINUTES = 120
+
+
 @app.post('/table/save_view')
 def table_save_view():
     body = request.get_json(force=True) or {}
@@ -481,6 +522,134 @@ def table_save_view():
         except Exception:
             pass
         return jsonify({ 'error': f'Oracle insert failed: {e}' }), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.post('/table/pin_view')
+def table_pin_view():
+    body = request.get_json(force=True) or {}
+    options = body.get('options') or {}
+    state = body.get('state') or {}
+    if not state:
+        return jsonify({ 'error': 'state required' }), 400
+    schema = body.get('schema') or {}
+    query_meta = body.get('query') or {}
+    dataset_sig = body.get('datasetSig') or ''
+    owner = body.get('owner') or ''
+    ttl_minutes = body.get('ttlMinutes')
+    try:
+        ttl_minutes = int(ttl_minutes)
+    except Exception:
+        ttl_minutes = DEFAULT_PIN_TTL_MINUTES
+    ttl_minutes = max(1, min(1440, ttl_minutes))
+    pin_id = body.get('pinId') or uuid.uuid4().hex
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_pins_table(conn)
+        cur = conn.cursor()
+        _cleanup_expired_pins(cur)
+        cur.setinputsizes(content=oracledb.CLOB, view_state=oracledb.CLOB, options=oracledb.CLOB)
+        cur.execute("""
+            INSERT INTO VEDA_PINNED_VIEWS
+              (PIN_ID, DATASET_SIG, OWNER_NAME, CREATED_AT, EXPIRES_AT, ROW_COUNT, ORIGINAL_ROW_COUNT, TRUNCATED, CONTENT, VIEW_STATE, OPTIONS)
+            VALUES
+              (:pin_id, :sig, :owner, SYSTIMESTAMP,
+               SYSTIMESTAMP + NUMTODSINTERVAL(:ttl, 'MINUTE'),
+               0, 0, 0,
+               :content, :view_state, :options)
+        """,
+        pin_id=pin_id,
+        sig=dataset_sig,
+        owner=owner,
+        ttl=ttl_minutes,
+        content=stable_stringify({ 'schema': schema, 'query': query_meta }),
+        view_state=stable_stringify(state),
+        options=stable_stringify(options)
+        )
+        conn.commit()
+        return jsonify({
+            'ok': True,
+            'pinId': pin_id,
+            'ttlMinutes': ttl_minutes
+        })
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({ 'error': f'Oracle insert failed: {e}' }), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get('/table/pinned_view')
+def table_pinned_view():
+    pin_id = request.args.get('pinId') or request.args.get('id')
+    if not pin_id:
+        return jsonify({ 'error': 'pinId required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_pins_table(conn)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT CONTENT, VIEW_STATE, OPTIONS, ROW_COUNT, ORIGINAL_ROW_COUNT, DATASET_SIG, OWNER_NAME, CREATED_AT, EXPIRES_AT, TRUNCATED
+            FROM VEDA_PINNED_VIEWS
+            WHERE PIN_ID = :pin_id
+        """, pin_id=pin_id)
+        row = cur.fetchone()
+        if not row:
+            return jsonify({ 'error': 'Not found' }), 404
+        content, view_state, options, row_count, original_count, dataset_sig, owner_name, created_at, expires_at, truncated = row
+        def read_lob(val):
+            if hasattr(val, 'read'):
+                return val.read()
+            return val
+        payload_content = {}
+        try:
+            state = json.loads(read_lob(view_state) or '{}')
+        except Exception:
+            state = {}
+        try:
+            opts = json.loads(read_lob(options) or '{}')
+        except Exception:
+            opts = {}
+        try:
+            payload_content = json.loads(read_lob(content) or '{}')
+        except Exception:
+            payload_content = {}
+        if isinstance(payload_content, dict):
+            schema = payload_content.get('schema') or {}
+            query_meta = payload_content.get('query') or {}
+        else:
+            schema = {}
+            query_meta = {}
+        payload = {
+            'pinId': pin_id,
+            'state': state,
+            'options': opts,
+            'schema': schema,
+            'query': query_meta,
+            'datasetSig': dataset_sig,
+            'owner': owner_name,
+            'createdAt': created_at.isoformat() if created_at else None,
+            'expiresAt': expires_at.isoformat() if expires_at else None
+        }
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
     finally:
         try:
             conn.close()

@@ -18,7 +18,9 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // removed unused imports
 import TableComponent from './components/TableComponent';
+import PinnedTableView from './components/PinnedTableView';
 import Composer from './components/Composer';
+
 
 
 // Define a custom markdown component for rendering code blocks
@@ -60,6 +62,14 @@ export default function App() {
       return (
         <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
           <DashboardViewer />
+        </div>
+      );
+    }
+    const pinnedId = params.get('pinnedId');
+    if (pinnedId) {
+      return (
+        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+          <PinnedTableView pinnedId={pinnedId} />
         </div>
       );
     }
