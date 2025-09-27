@@ -129,6 +129,7 @@ export default function App() {
   const [pushDownDb, setPushDownDb] = useState(false);
   const [logEnabled, setLogEnabled] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [settingsAnchorRect, setSettingsAnchorRect] = useState(null);
   const [isToolsetOpen, setIsToolsetOpen] = useState(false);
   const toolsetPanelRef = useRef(null);
   const [trainingUrl, setTrainingUrl] = useState(() => {
@@ -238,6 +239,8 @@ export default function App() {
     if (!isToolsetOpen) return;
     const onDown = (e) => {
       if (toolsetPanelRef.current?.contains(e.target)) return;
+      const settingsMenuEl = document.getElementById('hb-settings-menu');
+      if (settingsMenuEl?.contains(e.target)) return;
       setIsToolsetOpen(false);
     };
     const onKey = (e) => {
@@ -251,7 +254,9 @@ export default function App() {
     };
   }, [isToolsetOpen]);
   useEffect(() => {
-    if (settingsMenuOpen) setIsToolsetOpen(false);
+    if (!settingsMenuOpen) {
+      setSettingsAnchorRect(null);
+    }
   }, [settingsMenuOpen]);
   const [sendSqlToLlm, setSendSqlToLlm] = useState(false);
   const [tableButtonPermissions, setTableButtonPermissions] = useState({
@@ -821,6 +826,7 @@ export default function App() {
         setTrainingUrl={setTrainingUrl}
         settingsMenuOpen={settingsMenuOpen}
         onSettingsMenuChange={setSettingsMenuOpen}
+        settingsAnchorRect={settingsAnchorRect}
         updateIntervalMs={updateIntervalMs}
         setUpdateIntervalMs={setUpdateIntervalMs}
         minRowsPerUpdate={minRowsPerUpdate}
@@ -1010,9 +1016,11 @@ export default function App() {
             style={toolsetButtonStyle}
             onMouseEnter={onToolsetHoverIn}
             onMouseLeave={onToolsetHoverOut}
-            onClick={() => {
+            onClick={(e) => {
+              const buttonRect = e.currentTarget.getBoundingClientRect();
+              const panelRect = toolsetPanelRef.current?.getBoundingClientRect();
+              setSettingsAnchorRect({ buttonRect, panelRect });
               setSettingsMenuOpen(true);
-              setIsToolsetOpen(false);
             }}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>

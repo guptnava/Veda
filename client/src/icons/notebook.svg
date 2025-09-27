@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+
+  <!-- Outer notebook frame -->
+  <rect x="4" y="4" width="16" height="16" rx="2" ry="2" fill="none" stroke="#66caff" stroke-width="1.5" />
+
+  <!-- Notebook lines -->
+  <line x1="6" y1="7" x2="18" y2="7" stroke="#00aaff" stroke-width="1" />
+  <line x1="6" y1="10" x2="18" y2="10" stroke="#00aaff" stroke-width="1" />
+  <line x1="6" y1="13" x2="18" y2="13" stroke="#00aaff" stroke-width="1" />
+
+  <!-- Neural node grid -->
+  <circle cx="8" cy="16" r="1.2" fill="#00aaff" />
+  <circle cx="12" cy="16" r="1.2" fill="#00aaff" />
+  <circle cx="16" cy="16" r="1.2" fill="#00aaff" />
+</svg>

@@ -1,4 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <path d="M8 6h9v14H8z" stroke="#d4d4d4" stroke-width="1.6" fill="#252526"/>
-  <path d="M6 4h9v14" stroke="#d4d4d4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+
+  <!-- Back sheet (original) -->
+  <rect x="10" y="8" width="12" height="14" rx="2" ry="2" fill="none" stroke="#66caff" stroke-width="1.5" />
+
+  <!-- Front sheet (copy) -->
+  <rect x="4" y="4" width="12" height="14" rx="2" ry="2" fill="none" stroke="#00aaff" stroke-width="1.5" />
 </svg>

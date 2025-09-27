@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect x="0" y="0" width="24" height="24" fill="#2b2b2b" />
+
+  <!-- Outer dashboard frame -->
+  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" fill="none" stroke="#66caff" stroke-width="1.5" />
+
+  <!-- Top row: two panels -->
+  <rect x="5" y="5" width="6.5" height="5" rx="1" ry="1" fill="#00aaff" opacity="0.8" />
+  <rect x="12.5" y="5" width="6.5" height="5" rx="1" ry="1" fill="#00aaff" opacity="0.8" />
+
+  <!-- Bottom row: wide chart panel -->
+  <rect x="5" y="12" width="14" height="6.5" rx="1" ry="1" fill="#00aaff" opacity="0.6" />
+</svg>
