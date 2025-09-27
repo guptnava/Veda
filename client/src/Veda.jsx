@@ -5,9 +5,10 @@ import TableauStyleDashboard from './components/tableau_style_dashboard';
 import DashboardViewer from './components/DashboardViewer';
 import earthIcon from './icons/earth.jpg';
 import settingsGlyph from './icons/settings.svg';
-import chartGlyph from './icons/chart.svg';
-import chatboardGlyph from './icons/charttoggle.svg';
-import chatbookGlyph from './icons/text_widget.svg';
+import chartGlyph from './icons/dashboard_builder.svg';
+import dashboardViewerGlyph from './icons/dashboard_viewer.svg';
+import worksheetViewerGlyph from './icons/worksheet_viewer.svg';
+import chatbookGlyph from './icons/notebook.svg';
 import trainingGlyph from './icons/training.svg';
 import copyGlyph from './icons/copy.svg';
 import LeftPanel from './components/LeftPanel';
@@ -747,6 +748,13 @@ export default function App() {
     } catch {}
   };
 
+  const openWorksheetViewer = () => {
+    try {
+      const url = `${window.location.pathname}?dashboardView=`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
   const openChatBoardViewer = () => {
     try {
       const url = `${window.location.pathname}?chatboard=1`;
@@ -1059,13 +1067,28 @@ export default function App() {
             onMouseEnter={onToolsetHoverIn}
             onMouseLeave={onToolsetHoverOut}
             onClick={() => {
+              openWorksheetViewer();
+              setIsToolsetOpen(false);
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={worksheetViewerGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Worksheet Viewer
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
               openChatBoardViewer();
               setIsToolsetOpen(false);
             }}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-              <img src={chatboardGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              ChatBoard Viewer
+              <img src={dashboardViewerGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Dashboard Viewer
             </span>
           </button>
           <button
@@ -1080,7 +1103,7 @@ export default function App() {
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <img src={chatbookGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              Chatbook
+              Data Science Bench
             </span>
           </button>
           <button
