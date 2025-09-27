@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import StandaloneChrome from './StandaloneChrome';
 
 export default function DashboardViewer() {
   const [layout, setLayout] = useState(null);
@@ -47,38 +48,64 @@ export default function DashboardViewer() {
   }, [layout]);
 
   return (
-    <div style={{ padding: 16 }}>
-      <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.25rem', marginBottom: 8 }}>{name || 'Dashboard Viewer'}</div>
-      {message && (
-        <div style={{ color: '#9cdcfe', marginBottom: 10 }}>
-          {message}
-          {choices && choices.length > 0 && (
-            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label style={{ color: '#ddd' }}>Open:</label>
-              <select value={pick} onChange={(e) => setPick(e.target.value)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#1e1e1e', color: '#ddd' }}>
-                <option value="">Select…</option>
-                {choices.map(d => <option key={`${d.name}|${d.createdAt}`} value={d.name}>{d.name}</option>)}
-              </select>
-              <button type="button" onClick={() => { if (pick) window.location.search = `?dashboardView=${encodeURIComponent(pick)}`; }} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}>Open</button>
-            </div>
-          )}
-        </div>
-      )}
-      {(!widgets || widgets.length === 0) ? (
-        <div style={{ color: '#aaa' }}>No widgets.</div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 8 }}>
-          {widgets.map((w, idx) => (
-            <div key={w.id || idx} style={{ gridColumn: `span ${Math.max(1, Math.min(12, w.w||6))}`, background: '#222', border: '1px solid #444', borderRadius: 6, padding: 8 }}>
-              <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>{w.type === 'view' ? `View: ${w.viewName}` : (w.type || 'Widget')}</div>
-              <div style={{ color: '#bbb', fontSize: '0.9rem' }}>
-                {/* Placeholder rendering. For full fidelity, render Table/Chart from saved state */}
-                This widget will render data for saved view "{w.viewName}" (dataset: {w.datasetSig}).
+    <StandaloneChrome title="Dashboard Viewer">
+      <div style={{ flex: 1, padding: 24, background: '#101216', color: '#f7f9fc' }}>
+        <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.35rem', marginBottom: 12 }}>{name || 'Dashboard Viewer'}</div>
+        {message && (
+          <div style={{ color: '#9cdcfe', marginBottom: 14 }}>
+            {message}
+            {choices && choices.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ color: '#ddd' }}>Open:</label>
+                <select
+                  value={pick}
+                  onChange={(e) => setPick(e.target.value)}
+                  style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#1e1e1e', color: '#ddd' }}
+                >
+                  <option value="">Select…</option>
+                  {choices.map((d) => (
+                    <option key={`${d.name}|${d.createdAt}`} value={d.name}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pick) window.location.search = `?page=dashboard-viewer&dashboardView=${encodeURIComponent(pick)}`;
+                  }}
+                  style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}
+                >
+                  Open
+                </button>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+            )}
+          </div>
+        )}
+        {(!widgets || widgets.length === 0) ? (
+          <div style={{ color: '#aaa' }}>No widgets.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 12 }}>
+            {widgets.map((w, idx) => (
+              <div
+                key={w.id || idx}
+                style={{
+                  gridColumn: `span ${Math.max(1, Math.min(12, w.w || 6))}`,
+                  background: '#1b1f27',
+                  border: '1px solid #2c323d',
+                  borderRadius: 8,
+                  padding: 16,
+                }}
+              >
+                <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>{w.type === 'view' ? `View: ${w.viewName}` : (w.type || 'Widget')}</div>
+                <div style={{ color: '#b8c3d6', fontSize: '0.9rem' }}>
+                  This widget will render data for saved view "{w.viewName}" (dataset: {w.datasetSig}).
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </StandaloneChrome>
   );
 }

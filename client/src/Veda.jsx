@@ -3,6 +3,9 @@ import HeaderBar from './components/HeaderBar';
 import FooterBar from './components/FooterBar';
 import TableauStyleDashboard from './components/tableau_style_dashboard';
 import DashboardViewer from './components/DashboardViewer';
+import WorksheetViewer from './components/WorksheetViewer';
+import DataScienceBench from './components/DataScienceBench';
+import NotebookWorkbench from './components/NotebookWorkbench';
 import earthIcon from './icons/earth.jpg';
 import settingsGlyph from './icons/settings.svg';
 import chartGlyph from './icons/dashboard_builder.svg';
@@ -19,7 +22,6 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // removed unused imports
 import TableComponent from './components/TableComponent';
-import PinnedTableView from './components/PinnedTableView';
 import Composer from './components/Composer';
 
 
@@ -60,19 +62,20 @@ export default function App() {
       );
     }
     if (params.get('dashboardView')) {
-      return (
-        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
-          <DashboardViewer />
-        </div>
-      );
+      return <DashboardViewer />;
     }
-    const pinnedId = params.get('pinnedId');
-    if (pinnedId) {
-      return (
-        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
-          <PinnedTableView pinnedId={pinnedId} />
-        </div>
-      );
+    const page = params.get('page');
+    if (page === 'dashboard-viewer') {
+      return <DashboardViewer />;
+    }
+    if (page === 'worksheet-viewer' || params.get('pinnedId')) {
+      return <WorksheetViewer />;
+    }
+    if (page === 'data-science-bench') {
+      return <DataScienceBench />;
+    }
+    if (page === 'notebook-workbench') {
+      return <NotebookWorkbench />;
     }
   } catch {}
   const cleanStreamText = (s) => {
@@ -750,21 +753,21 @@ export default function App() {
 
   const openWorksheetViewer = () => {
     try {
-      const url = `${window.location.pathname}?dashboardView=`;
+      const url = `${window.location.pathname}?page=worksheet-viewer`;
       window.open(url, '_blank', 'noopener');
     } catch {}
   };
 
   const openChatBoardViewer = () => {
     try {
-      const url = `${window.location.pathname}?chatboard=1`;
+      const url = `${window.location.pathname}?page=dashboard-viewer`;
       window.open(url, '_blank', 'noopener');
     } catch {}
   };
 
   const openChatbook = () => {
     try {
-      const url = `${window.location.pathname}?chatbook=1`;
+      const url = `${window.location.pathname}?page=data-science-bench`;
       window.open(url, '_blank', 'noopener');
     } catch {}
   };
