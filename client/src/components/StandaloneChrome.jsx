@@ -36,6 +36,31 @@ export default function StandaloneChrome({ title, children }) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [toolsetActive, setToolsetActive] = useState(false);
 
+  const injectedProps = {
+    tableButtonPermissions,
+    sendSqlToLlm,
+    perfMaxClientRows,
+    perfMaxScan,
+    perfMaxDistinct,
+    virtualizeOnMaximize,
+    virtMaxClientRows,
+    virtRowHeight,
+    serverMode,
+    tableOpsMode,
+    pushDownDb,
+    logEnabled,
+    trainingUrl,
+    updateIntervalMs,
+    minRowsPerUpdate,
+    clobPreview,
+    blobPreview,
+    maxVisibleMessages,
+  };
+
+  const enhancedChildren = React.Children.map(children, (child) =>
+    React.isValidElement(child) ? React.cloneElement(child, injectedProps) : child,
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0b0b0b' }}>
       <HeaderBar
@@ -82,9 +107,7 @@ export default function StandaloneChrome({ title, children }) {
         maxVisibleMessages={maxVisibleMessages}
         setMaxVisibleMessages={setMaxVisibleMessages}
       />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
-        {children}
-      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>{enhancedChildren}</div>
       <FooterBar
         heapUsedMB={null}
         rowsFetchedTotal={0}

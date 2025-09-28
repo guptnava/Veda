@@ -4,6 +4,7 @@ import cors from 'cors';
 import { fetch as undiciFetch } from 'undici';
 import ExcelJS from 'exceljs'; // ← Add at top
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { spawn } from 'child_process';
 
 import fs from 'fs';
 import path from 'path';
@@ -290,6 +291,85 @@ app.post('/api/generate', async (req, res) => {
     }
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+const sanitizeRows = (rows) => {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => {
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        const sanitized = {};
+        for (const [key, value] of Object.entries(row)) {
+          if (!['_base_sql', '_column_types', '_search_columns'].includes(key)) {
+            sanitized[key] = value;
+          }
+        }
+        return sanitized;
+      }
+      return { value: row };
+    })
+    .filter((row) => Object.keys(row).length > 0);
+};
+
+app.post('/api/python/execute', async (req, res) => {
+  try {
+    const { code, frames = {} } = req.body || {};
+    if (typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'Python code is required.' });
+    }
+
+    const pythonBridge = `import sys, json\ntry:\n    import pandas as pd\nexcept Exception:\n    pd = None\n\npayload = json.loads(sys.stdin.read())\nframes = payload.get('frames') or {}\ntables = {}\nfor name, rows in frames.items():\n    try:\n        if pd is not None:\n            tables[name] = pd.DataFrame(rows)\n        else:\n            tables[name] = rows\n    except Exception:\n        tables[name] = rows\n\nfrom io import StringIO\nimport contextlib\nstdout_capture = StringIO()\nstderr_capture = StringIO()\nexec_globals = {'pd': pd, 'tables': tables, 'dataframes': tables}\nexec_locals = {}\ncode = payload.get('code', '')\nwith contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):\n    exec(code, exec_globals, exec_locals)\nresult_tables = {}\nIGNORE = {'_base_sql', '_column_types', '_search_columns'}\nfor name, value in tables.items():\n    try:\n        if pd is not None and hasattr(value, 'to_dict'):\n            records = value.replace({pd.NA: None}).to_dict(orient='records')\n        elif isinstance(value, list):\n            records = value\n        else:\n            continue\n        sanitized = []\n        for row in records:\n            if isinstance(row, dict):\n                sanitized.append({k: v for k, v in row.items() if k not in IGNORE})\n            else:\n                sanitized.append({'value': row})\n        result_tables[name] = sanitized\n    except Exception:\n        pass\nout = {\n    'stdout': stdout_capture.getvalue(),\n    'stderr': stderr_capture.getvalue(),\n    'tables': result_tables\n}\nprint(json.dumps(out))`;
+
+    const py = spawn('python3', ['-c', pythonBridge], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const inputPayload = JSON.stringify({ code, frames });
+    py.stdin.write(inputPayload);
+    py.stdin.end();
+
+    let stdoutData = '';
+    let stderrData = '';
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      py.kill('SIGKILL');
+    }, 15000);
+
+    py.stdout.on('data', (chunk) => {
+      stdoutData += chunk.toString();
+    });
+    py.stderr.on('data', (chunk) => {
+      stderrData += chunk.toString();
+    });
+
+    py.on('close', (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        return res.status(500).json({ error: 'Python execution timed out.' });
+      }
+      if (code !== 0) {
+        return res.status(500).json({ error: stderrData || 'Python execution failed.' });
+      }
+      try {
+        const parsed = JSON.parse(stdoutData || '{}');
+        const sanitizedTables = {};
+        if (parsed.tables && typeof parsed.tables === 'object') {
+          for (const [name, rows] of Object.entries(parsed.tables)) {
+            sanitizedTables[name] = sanitizeRows(rows);
+          }
+        }
+        return res.json({
+          stdout: parsed.stdout || '',
+          stderr: parsed.stderr || '',
+          tables: sanitizedTables,
+        });
+      } catch (err) {
+        return res.status(500).json({ error: 'Failed to parse Python output.', raw: stdoutData });
+      }
+    });
+  } catch (err) {
+    console.error('python-execute failed', err);
+    res.status(500).json({ error: err.message || 'Python execution error' });
   }
 });
 

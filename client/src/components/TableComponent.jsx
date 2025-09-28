@@ -43,6 +43,8 @@ const ICON_LOAD = IconLoad;
 const ICON_PIN = IconPin;
 
 // Generic toolbar icon button
+export const TABLE_COMPONENT_DEFAULT_PAGE_SIZE = 10;
+
 const ToolbarButton = ({ icon, alt, title, onClick, active, disabled }) => (
   <button
     type="button"
@@ -341,7 +343,7 @@ const DerivedPicker = ({ baseHeaders, derivedCols, setDerivedCols, useFixed = tr
   );
 };
 
-const TableComponent = React.memo(({ data, initialPageSize = 10, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null }) => {
+const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEFAULT_PAGE_SIZE, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null }) => {
   const [sortConfig, setSortConfig] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleColumns, setVisibleColumns] = useState([]);
