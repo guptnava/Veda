@@ -19,7 +19,7 @@ const messageStyle = {
   gap: '12px',
 };
 
-const PinnedTableView = ({ pinnedId }) => {
+const PinnedTableView = ({ pinnedId, onMetrics = () => {} }) => {
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,10 +28,14 @@ const PinnedTableView = ({ pinnedId }) => {
     if (!pinnedId) {
       setError('Pinned view ID is missing.');
       setPayload(null);
+      try { onMetrics({ rowsFetchedTotal: 0, avgResponseTime: NaN }); } catch {}
       return;
     }
     setError('');
     const controller = new AbortController();
+    const startedAt = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
     const load = async () => {
       try {
         setLoading(true);
@@ -50,7 +54,7 @@ const PinnedTableView = ({ pinnedId }) => {
         if (!data || !data.state) {
           throw new Error('Pinned view payload is invalid.');
         }
-        setPayload({
+        const nextPayload = {
           options: data.options || {},
           state: data.state || {},
           schema: data.schema || {},
@@ -59,13 +63,31 @@ const PinnedTableView = ({ pinnedId }) => {
             expiresAt: data.expiresAt,
             createdAt: data.createdAt,
           },
-        });
+        };
+        setPayload(nextPayload);
+        try {
+          const nowStamp = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+          const elapsed = nowStamp - startedAt;
+          const seconds = elapsed / 1000;
+          const options = nextPayload.options || {};
+          const state = nextPayload.state || {};
+          const rowsEstimate = options.totalRows ?? state.totalRows ?? (Array.isArray(state.rows) ? state.rows.length : 0);
+          onMetrics({
+            rowsFetchedTotal: typeof rowsEstimate === 'number' && Number.isFinite(rowsEstimate) ? rowsEstimate : 0,
+            avgResponseTime: Number.isFinite(seconds) ? seconds : NaN,
+          });
+        } catch (metricErr) {
+          console.warn('Pinned view metrics update failed', metricErr);
+        }
         try { document.title = 'Pinned Table View'; } catch {}
       } catch (err) {
         if (err.name === 'AbortError') return;
         console.error('Pinned view load failed', err);
         setPayload(null);
         setError(err.message || 'Failed to load the pinned view. See console for details.');
+        try { onMetrics({ rowsFetchedTotal: 0, avgResponseTime: NaN }); } catch {}
       } finally {
         setLoading(false);
       }

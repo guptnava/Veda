@@ -36,6 +36,43 @@ export default function StandaloneChrome({ title, children }) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [toolsetActive, setToolsetActive] = useState(false);
 
+  const getHeapUsageMB = () => {
+    try {
+      const used = performance?.memory?.usedJSHeapSize;
+      if (typeof used === 'number' && Number.isFinite(used)) {
+        return Math.max(0, Math.round(used / (1024 * 1024)));
+      }
+    } catch (err) {
+      console.warn('Heap usage read failed', err);
+    }
+    return null;
+  };
+
+  const [footerMetrics, setFooterMetrics] = useState({
+    heapUsedMB: getHeapUsageMB(),
+    rowsFetchedTotal: 0,
+    avgResponseTime: NaN,
+  });
+
+  const handleFooterMetricsChange = (partial = {}) => {
+    setFooterMetrics(prev => ({ ...prev, ...partial }));
+  };
+
+  const refreshHeapUsage = () => {
+    handleFooterMetricsChange({ heapUsedMB: getHeapUsageMB() });
+  };
+
+  const handleFreeContent = () => {
+    try {
+      if (typeof globalThis.gc === 'function') {
+        globalThis.gc();
+      }
+    } catch (err) {
+      console.warn('Manual GC invocation failed', err);
+    }
+    refreshHeapUsage();
+  };
+
   const injectedProps = {
     tableButtonPermissions,
     sendSqlToLlm,
@@ -55,6 +92,8 @@ export default function StandaloneChrome({ title, children }) {
     clobPreview,
     blobPreview,
     maxVisibleMessages,
+    onFooterMetricsChange: handleFooterMetricsChange,
+    refreshHeapUsage,
   };
 
   const enhancedChildren = React.Children.map(children, (child) =>
@@ -109,10 +148,10 @@ export default function StandaloneChrome({ title, children }) {
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>{enhancedChildren}</div>
       <FooterBar
-        heapUsedMB={null}
-        rowsFetchedTotal={0}
-        avgResponseTime={NaN}
-        onFreeContent={() => {}}
+        heapUsedMB={footerMetrics.heapUsedMB}
+        rowsFetchedTotal={footerMetrics.rowsFetchedTotal}
+        avgResponseTime={footerMetrics.avgResponseTime}
+        onFreeContent={handleFreeContent}
         onToggleToolset={() => setToolsetActive((prev) => !prev)}
         toolsetActive={toolsetActive}
       />
