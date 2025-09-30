@@ -350,7 +350,7 @@ const bevelSectionStyle = {
 
 const MIN_LEFT_PANEL_SECTION_HEIGHT = 108;
 
-export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refreshHeapUsage = () => {} }) {
+function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsage = () => {} }) {
   const [savedViews, setSavedViews] = useState([]);
   const [viewsLoading, setViewsLoading] = useState(false);
   const [viewsError, setViewsError] = useState('');
@@ -507,9 +507,14 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
     }
   }, []);
 
+  const initMetricsRef = useRef(false);
   useEffect(() => {
-    refreshHeapUsage();
-    onFooterMetricsChange({ rowsFetchedTotal: 0, avgResponseTime: NaN });
+    if (initMetricsRef.current) return;
+    try {
+      refreshHeapUsage();
+      onFooterMetricsChange({ rowsFetchedTotal: 0, avgResponseTime: NaN });
+    } catch {}
+    initMetricsRef.current = true;
   }, [refreshHeapUsage, onFooterMetricsChange]);
 
   const handleDragStart = useCallback((event, view) => {
@@ -625,7 +630,6 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
   }, [activeViewKey, savedViews]);
 
   return (
-    <StandaloneChrome title="Worksheet Viewer">
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div
           style={{
@@ -914,13 +918,16 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
                 border: dropActive ? '2px dashed #0e639c' : '2px dashed #2b3646',
                 background: dropActive ? 'rgba(14, 99, 156, 0.12)' : 'transparent',
                 borderRadius: 12,
-                padding: '20px 18px',
+                padding: '20px 18px 36px',
                 color: '#c7d5f2',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
                 minHeight: 0,
-                overflow: 'hidden',
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                boxSizing: 'border-box',
               }}
             >
               <div style={{ fontSize: '1rem', fontWeight: 600 }}>Drop Zone</div>
@@ -997,6 +1004,13 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
           </div>
         </div>
       </div>
+  );
+}
+
+export default function WorksheetViewer(props) {
+  return (
+    <StandaloneChrome title="Worksheet Viewer">
+      <WorksheetViewerInner {...props} />
     </StandaloneChrome>
   );
 }

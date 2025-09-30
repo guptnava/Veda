@@ -255,7 +255,7 @@ const HeaderBar = ({
               </>
             ) : (
               <span style={{
-                fontSize: '1.7rem',
+                fontSize: title === 'Worksheet Viewer' ? '1.02rem' : title === 'Dashboard Viewer' || title === 'Dashboard Builder' ? '1.02rem' : '1.7rem',
                 fontWeight: 1000,
                 letterSpacing: '0.6px',
                 color: 'transparent',

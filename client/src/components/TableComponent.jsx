@@ -343,7 +343,7 @@ const DerivedPicker = ({ baseHeaders, derivedCols, setDerivedCols, useFixed = tr
   );
 };
 
-const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEFAULT_PAGE_SIZE, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null }) => {
+const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEFAULT_PAGE_SIZE, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null, dashboardMode = false }) => {
   const [sortConfig, setSortConfig] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleColumns, setVisibleColumns] = useState([]);
@@ -2378,7 +2378,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   const containerStyle = isMaximized
     ? { position: 'fixed', inset: 0, zIndex: 1000, background: '#0b0b0b', padding: 10, overflow: 'auto', fontSize: `${fontSize}px` }
     : { position: 'relative', fontSize: `${fontSize}px` };
-  const perm = buttonPermissions || {
+  const basePerm = buttonPermissions || {
     searchAndSorting: true,
     columns: true,
     pivot: true,
@@ -2391,8 +2391,11 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
     pagination: true,
     export: true,
   };
+  const perm = dashboardMode ? { ...basePerm, export: false, pagination: true } : basePerm;
   const disabledStyle = { pointerEvents: 'none', opacity: 0.6, cursor: 'not-allowed' };
   const allDisabled = !!buttonsDisabled;
+  const containerControlsDisabled = allDisabled && !dashboardMode;
+  const paginationDisabled = !dashboardMode && (!perm.pagination || allDisabled);
 
 
   const collectViewState = () => ({
@@ -2562,7 +2565,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   };
 
   return (
-    <div className={`table-container ${allDisabled ? 'disable-buttons' : ''}`} style={containerStyle} aria-disabled={allDisabled}>
+    <div className={`table-container ${containerControlsDisabled ? 'disable-buttons' : ''}`} style={containerStyle} aria-disabled={containerControlsDisabled}>
       {(
         <style>
           {`
@@ -2610,7 +2613,8 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
         </style>
       )}
       {/* Excel-like Toolbar with icon buttons */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 6, border: '1px solid #333', borderRadius: 6, background: '#1f1f1f', marginBottom: 8, flexWrap: 'wrap' }}>
+      {!dashboardMode && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 6, border: '1px solid #333', borderRadius: 6, background: '#1f1f1f', marginBottom: 8, flexWrap: 'wrap' }}>
         {/* Save View */}
         <ToolbarButton
           icon={ICON_SAVE}
@@ -2822,7 +2826,8 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           Freeze
           <input type="number" min="0" max={displayColumns.length} value={freezeCount} onChange={(e) => setFreezeCount(Math.max(0, Math.min(displayColumns.length, Number(e.target.value))))} style={{ width: 56, marginLeft: 6, padding: '2px', background: '#1e1e1e', border: '1px solid #444', color: '#d4d4d4', borderRadius: 4 }} />
         </label>
-      </div>
+        </div>
+      )}
       {/* Load view picker */}
       {showLoadPicker && (
         <div style={{ position: 'fixed', top: 64, right: 10, zIndex: 1000, background: '#252526', border: '1px solid #444', borderRadius: 6, padding: 8, width: 420, maxHeight: '70vh', overflow: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
@@ -2846,7 +2851,8 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
         </div>
       )}
       {/* Controls (minimal; main inputs moved to toolbar) */}
-      <div className="sec-controls" style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
+      {!dashboardMode && (
+        <div className="sec-controls" style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
         {/* Undo/Redo */}
         <div style={{ display: 'inline-flex', gap: 6 }}>
           <button type="button" onClick={undo} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Undo</button>
@@ -2900,7 +2906,8 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           })()}
         </div>
         <button type="button" onClick={() => setShowDrill(false)} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Close</button>
-      </div>
+        </div>
+      )}
       {/* Selection summary & actions */}
       {(() => {
         const colSel = Object.entries(selectedValuesByCol || {}).filter(([c, s]) => s && s.size > 0);
@@ -3475,6 +3482,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           )}
         </div>
       </div>
+      )}
       {/* Active filter chips */}
       {(() => {
         const entries = Object.entries(colFilters || {}).filter(([c, f]) => f && f.op && (f.op === 'isEmpty' || f.op === 'notEmpty' || (f.value != null && String(f.value).length > 0)));
@@ -4099,15 +4107,20 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
       )}
 
       {/* Pagination + Footer */}
-      <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...(allDisabled || !perm.pagination ? disabledStyle : {}), ...(isVirtualized ? { opacity: 0.5, pointerEvents: 'none' } : {}) }}>
-        <button type="button" style={linkButtonStyle} onClick={() => goToPage(1)} disabled={currentPage === 1}>First</button>
-        <button type="button" style={linkButtonStyle} onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>Prev</button>
+      <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...((paginationDisabled && !dashboardMode) ? disabledStyle : {}), ...(isVirtualized && !dashboardMode ? { opacity: 0.5, pointerEvents: 'none' } : {}) }}>
+        <button type="button" style={linkButtonStyle} onClick={() => goToPage(1)} disabled={paginationDisabled || currentPage === 1}>First</button>
+        <button type="button" style={linkButtonStyle} onClick={() => goToPage(currentPage - 1)} disabled={paginationDisabled || currentPage === 1}>Prev</button>
         <span>Page {currentPage} of {totalPages}</span>
-        <button type="button" style={linkButtonStyle} onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</button>
-        <button type="button" style={linkButtonStyle} onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>Last</button>
+        <button type="button" style={linkButtonStyle} onClick={() => goToPage(currentPage + 1)} disabled={paginationDisabled || currentPage === totalPages}>Next</button>
+        <button type="button" style={linkButtonStyle} onClick={() => goToPage(totalPages)} disabled={paginationDisabled || currentPage === totalPages}>Last</button>
         <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
           Rows per page:
-          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} style={{ padding: "2px 4px", borderRadius: 4, fontSize: `${fontSize}px` }}>
+          <select
+            value={pageSize}
+            onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+            disabled={dashboardMode || paginationDisabled}
+            style={{ padding: "2px 4px", borderRadius: 4, fontSize: `${fontSize}px`, ...((dashboardMode || paginationDisabled) ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
+          >
             {[5, 10, 20, 50, 100].map((size) => (
               <option key={size} value={size}>{size}</option>
             ))}
@@ -4160,12 +4173,14 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           </div>
         );
       })()}
-      <div style={{ display: 'flex', gap: 8, marginTop: 6, ...(allDisabled || !perm.export ? disabledStyle : {}) }}>
-        <button type="button" onClick={() => exportData('csv')} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export CSV</button>
-        <button type="button" onClick={() => exportData('json')} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export JSON</button>
-        <button type="button" onClick={exportXlsx} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export XLSX</button>
-        <button type="button" onClick={exportPdf} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export PDF</button>
-      </div>
+      {!dashboardMode && perm.export && (
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button type="button" onClick={() => exportData('csv')} style={{ padding: '4px 8px', borderRadius: 4, border: "1px solid #444", background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export CSV</button>
+          <button type="button" onClick={() => exportData('json')} style={{ padding: '4px 8px', borderRadius: 4, border: "1px solid #444", background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export JSON</button>
+          <button type="button" onClick={exportXlsx} style={{ padding: '4px 8px', borderRadius: 4, border: "1px solid #444", background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export XLSX</button>
+          <button type="button" onClick={exportPdf} style={{ padding: '4px 8px', borderRadius: 4, border: "1px solid #444", background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}>Export PDF</button>
+        </div>
+      )}
     </div>
   );
 });

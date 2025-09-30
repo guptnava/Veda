@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Dark background -->
+  <rect width="24" height="24" fill="#2b2b2b"/>
+
+  <!-- Left block -->
+  <rect x="3" y="8" width="4" height="8" rx="1" ry="1" fill="#00aaff"/>
+
+  <!-- Center block -->
+  <rect x="10" y="8" width="4" height="8" rx="1" ry="1" fill="#00aaff"/>
+
+  <!-- Right block -->
+  <rect x="17" y="8" width="4" height="8" rx="1" ry="1" fill="#00aaff"/>
+
+  <!-- Guide lines (optional) -->
+  <line x1="7" y1="12" x2="10" y2="12" stroke="#66caff" stroke-width="1" stroke-dasharray="2,2"/>
+  <line x1="14" y1="12" x2="17" y2="12" stroke="#66caff" stroke-width="1" stroke-dasharray="2,2"/>
+</svg>
