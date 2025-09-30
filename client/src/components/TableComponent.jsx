@@ -2243,7 +2243,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   // Stats for numeric columns (for scales/data bars)
   const colStats = React.useMemo(() => {
     const stats = {};
-    const rows = withDerived;
+    const rows = serverMode ? serverRowsWithDerived : withDerived;
     headers.forEach((h) => {
       const nums = rows.map(r => Number(r[h])).filter((v) => isFinite(v));
       if (nums.length) {
@@ -2253,7 +2253,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
       }
     });
     return stats;
-  }, [headers, withDerived]);
+  }, [headers, withDerived, serverMode, serverRowsWithDerived]);
 
   // Conditional formatting helpers
   const needsValue = (op) => !["isEmpty", "notEmpty"].includes(op);
@@ -2510,7 +2510,9 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
         throw new Error(msg);
       }
       if (typeof window !== 'undefined') {
-        const nextUrl = new URL(window.location.href);
+        const base = `${window.location.origin}${window.location.pathname}`;
+        const nextUrl = new URL(base);
+        nextUrl.searchParams.set('page', 'pinned-table');
         nextUrl.searchParams.set('pinnedId', resp.pinId);
         window.open(nextUrl.toString(), '_blank', 'noopener');
       }

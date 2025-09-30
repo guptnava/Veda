@@ -4,6 +4,7 @@ import FooterBar from './components/FooterBar';
 import TableauStyleDashboard from './components/tableau_style_dashboard';
 import DashboardViewer from './components/DashboardViewer';
 import WorksheetViewer from './components/WorksheetViewer';
+import PinnedTableView from './components/PinnedTableView';
 import DataScienceBench from './components/DataScienceBench';
 import NotebookWorkbench from './components/NotebookWorkbench';
 import earthIcon from './icons/earth.jpg';
@@ -47,6 +48,7 @@ export default function App() {
   // If dashboard mode (?dashboard=1), render the builder page
   try {
     const params = new URLSearchParams(window.location.search);
+    const pinnedIdParam = params.get('pinnedId');
     if (params.get('dashboard2') === '1') {
       return (
         <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
@@ -68,7 +70,10 @@ export default function App() {
     if (page === 'dashboard-viewer') {
       return <DashboardViewer />;
     }
-    if (page === 'worksheet-viewer' || params.get('pinnedId')) {
+    if (page === 'pinned-table') {
+      return <PinnedTableView pinnedId={pinnedIdParam || ''} />;
+    }
+    if (page === 'worksheet-viewer' || (!page && pinnedIdParam)) {
       return <WorksheetViewer />;
     }
     if (page === 'data-science-bench') {

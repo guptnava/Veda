@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StandaloneChrome from './StandaloneChrome';
-import PinnedTableView from './PinnedTableView';
+import TableComponent from './TableComponent';
 import savedViewIcon from '../icons/worksheet_viewer.svg';
 
 const getFieldValue = (source, candidates) => {
@@ -69,7 +69,56 @@ const parseSavedViewContent = (view) => {
   return { state: topLevel, root: topLevel };
 };
 
-const buildPinPayloadFromView = (view) => {
+const ensureHeaders = (schema, state, topLevel) => {
+  const cascadeHeaders = (candidate) => {
+    if (!Array.isArray(candidate)) return null;
+    if (!candidate.length) return null;
+    return candidate;
+  };
+  if (!schema.headers) {
+    const fromState = cascadeHeaders(state?.headers);
+    if (fromState) {
+      schema.headers = fromState;
+    } else {
+      const fromTop = cascadeHeaders(topLevel?.headers);
+      if (fromTop) schema.headers = fromTop;
+    }
+  }
+  return schema;
+};
+
+const normalizeRows = (rows, headers) => {
+  if (!Array.isArray(rows) || !rows.length) {
+    return { rows: [], headers: Array.isArray(headers) ? headers : [] };
+  }
+  const headerNames = Array.isArray(headers)
+    ? headers.map((header, idx) => {
+        if (typeof header === 'string') return header;
+        if (header && typeof header === 'object') {
+          return header.name || header.field || header.title || header.label || `col_${idx}`;
+        }
+        return `col_${idx}`;
+      })
+    : [];
+  if (!headerNames.length) {
+    const filtered = rows.filter((row) => row && typeof row === 'object');
+    return { rows: filtered, headers: headerNames }; // headers empty
+  }
+  const normalized = rows.map((row) => {
+    if (row && typeof row === 'object' && !Array.isArray(row)) {
+      return row;
+    }
+    if (!Array.isArray(row)) return {};
+    const obj = {};
+    headerNames.forEach((header, idx) => {
+      obj[header] = row[idx];
+    });
+    return obj;
+  });
+  return { rows: normalized, headers: headerNames };
+};
+
+const buildTablePropsForView = (view) => {
   if (!view) return null;
   const parsed = parseSavedViewContent(view);
   const rawState = parsed?.state;
@@ -161,7 +210,7 @@ const buildPinPayloadFromView = (view) => {
     || (state.schema && typeof state.schema === 'object' ? state.schema : null)
     || state.initialSchema
     || {};
-  const schema = { ...(schemaCandidate || {}) };
+  const schema = ensureHeaders({ ...(schemaCandidate || {}) }, state, topLevel);
   const headersFromState = getFieldValue(state, ['headers', 'HEADERS']);
   if (headersFromState && !schema.headers) {
     schema.headers = headersFromState;
@@ -179,62 +228,6 @@ const buildPinPayloadFromView = (view) => {
     ...(state.query && typeof state.query === 'object' ? state.query : {}),
   };
 
-  if (state.exportContext) {
-    options.exportContext = state.exportContext;
-    query.exportContext = state.exportContext;
-  }
-  if (state.tableOpsMode !== undefined) {
-    options.tableOpsMode = state.tableOpsMode;
-    query.tableOpsMode = state.tableOpsMode;
-  }
-  if (state.pushDownDb !== undefined) {
-    options.pushDownDb = state.pushDownDb;
-    query.pushDownDb = state.pushDownDb;
-  }
-  if (state.perfOptions) {
-    options.perfOptions = state.perfOptions;
-  }
-  if (state.previewOptions) {
-    options.previewOptions = state.previewOptions;
-  }
-  if (typeof state.pageSize === 'number') {
-    options.initialPageSize = state.pageSize;
-  } else if (typeof state.initialPageSize === 'number') {
-    options.initialPageSize = state.initialPageSize;
-  }
-  if (typeof state.fontSize === 'number') {
-    options.initialFontSize = state.fontSize;
-  } else if (typeof state.initialFontSize === 'number') {
-    options.initialFontSize = state.initialFontSize;
-  }
-  if (state.buttonPermissions) {
-    options.buttonPermissions = state.buttonPermissions;
-  }
-  if (state.totalRows !== undefined) {
-    options.totalRows = state.totalRows;
-  }
-  if (state.serverMode !== undefined) {
-    options.serverMode = state.serverMode;
-  }
-  if (state.virtualRowHeight !== undefined) {
-    options.virtualRowHeight = state.virtualRowHeight;
-  }
-  if (state.virtualizeOnMaximize !== undefined) {
-    options.virtualizeOnMaximize = state.virtualizeOnMaximize;
-  }
-  if (schema && Object.keys(schema).length && !options.initialSchema) {
-    options.initialSchema = schema;
-  }
-  if (options.virtualizeOnMaximize === undefined) {
-    options.virtualizeOnMaximize = true;
-  }
-  if (options.virtualRowHeight === undefined && state.virtualRowHeight !== undefined) {
-    options.virtualRowHeight = state.virtualRowHeight;
-  }
-  if (options.totalRows === undefined && state.totalRows !== undefined) {
-    options.totalRows = state.totalRows;
-  }
-
   const normalizeJsonField = (container, key) => {
     if (!container) return;
     const value = container[key];
@@ -249,15 +242,100 @@ const buildPinPayloadFromView = (view) => {
   normalizeJsonField(options, 'exportContext');
   normalizeJsonField(query, 'exportContext');
 
+  const rowsRaw = Array.isArray(state.rows)
+    ? state.rows
+    : (Array.isArray(state.data)
+      ? state.data
+      : (Array.isArray(state.previewRows)
+        ? state.previewRows
+        : (Array.isArray(state.preview?.rows) ? state.preview.rows : [])));
+  const { rows: normalizedRows, headers: normalizedHeaders } = normalizeRows(rowsRaw, schema.headers || state.headers || topLevel?.headers || []);
+  if (normalizedHeaders.length && (!schema.headers || schema.headers.length !== normalizedHeaders.length)) {
+    schema.headers = normalizedHeaders;
+  }
+  const exportCtx = state.exportContext || options.exportContext || query.exportContext || null;
+  const hasRows = normalizedRows.length > 0;
+  const resolvedServerMode = state.serverMode !== undefined
+    ? state.serverMode
+    : (typeof options.serverMode === 'boolean' ? options.serverMode : true);
+  const effectiveServerMode = exportCtx ? true : (hasRows ? false : resolvedServerMode);
+  const tableData = exportCtx ? [] : normalizedRows;
+  const totalRows = exportCtx
+    ? (options.totalRows ?? state.totalRows ?? normalizedRows.length)
+    : (normalizedRows.length || options.totalRows || state.totalRows || 0);
+
   return {
     datasetSig: datasetSig ? String(datasetSig) : '',
     owner: owner ? String(owner) : undefined,
-    state,
-    options,
-    schema,
-    query,
+    tableProps: {
+      data: tableData,
+      initialPageSize: options.initialPageSize ?? state.pageSize ?? 100,
+      initialFontSize: options.initialFontSize ?? state.fontSize ?? 11,
+      buttonPermissions: options.buttonPermissions,
+      perfOptions: options.perfOptions,
+      previewOptions: options.previewOptions,
+      exportContext: exportCtx,
+      totalRows: totalRows,
+      serverMode: effectiveServerMode,
+      tableOpsMode: options.tableOpsMode ?? state.tableOpsMode ?? 'flask',
+      pushDownDb: options.pushDownDb ?? state.pushDownDb ?? false,
+      virtualizeOnMaximize: options.virtualizeOnMaximize ?? state.virtualizeOnMaximize ?? true,
+      virtualRowHeight: options.virtualRowHeight ?? state.virtualRowHeight ?? 28,
+      initialMaximized: false,
+      showMaximizeControl: true,
+      initialViewState: state,
+      initialSchema: options.initialSchema || schema,
+    },
   };
 };
+
+const extractViewDetails = (view) => {
+  if (!view) return null;
+  const viewName = getFieldValue(view, ['viewName', 'view_name', 'VIEW_NAME', 'name']) || '';
+  const datasetSig = getFieldValue(view, ['datasetSig', 'dataset_sig', 'DATASET_SIG', 'dataset', 'DATASET']) || '';
+  const ownerName = getFieldValue(view, ['ownerName', 'owner_name', 'OWNER_NAME', 'owner', 'OWNER']) || '';
+  const rawCreated = getFieldValue(view, ['createdAt', 'created_at', 'CREATED_AT']) || '';
+  const rawContent = getFieldValue(view, ['content', 'CONTENT', 'viewState', 'view_state']);
+
+  let createdDisplay = rawCreated ? String(rawCreated) : '';
+  if (rawCreated) {
+    const parsed = new Date(rawCreated);
+    if (!Number.isNaN(parsed.getTime())) {
+      try {
+        createdDisplay = parsed.toISOString().replace('T', ' ').replace('Z', ' UTC');
+      } catch {
+        createdDisplay = parsed.toLocaleString();
+      }
+    }
+  }
+
+  let formattedContent = '';
+  if (rawContent !== undefined && rawContent !== null) {
+    if (typeof rawContent === 'string') {
+      try {
+        const parsed = JSON.parse(rawContent);
+        formattedContent = JSON.stringify(parsed, null, 2);
+      } catch {
+        formattedContent = rawContent;
+      }
+    } else {
+      try {
+        formattedContent = JSON.stringify(rawContent, null, 2);
+      } catch {
+        formattedContent = String(rawContent);
+      }
+    }
+  }
+
+  return {
+    viewName,
+    datasetSig,
+    ownerName,
+    createdDisplay,
+    formattedContent,
+  };
+};
+
 
 const bevelSectionStyle = {
   border: '2px solid #1f2a3b',
@@ -270,111 +348,45 @@ const bevelSectionStyle = {
   minHeight: 0,
 };
 
-export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refreshHeapUsage = () => {} }) {
-  const searchParams = useMemo(() => {
-    try {
-      return new URLSearchParams(window.location.search);
-    } catch {
-      return null;
-    }
-  }, []);
+const MIN_LEFT_PANEL_SECTION_HEIGHT = 108;
 
-  const initialPinnedId = useMemo(() => searchParams?.get('pinnedId') || '', [searchParams]);
-  const [activePinnedId, setActivePinnedId] = useState(() => (initialPinnedId || '').trim());
+export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refreshHeapUsage = () => {} }) {
   const [savedViews, setSavedViews] = useState([]);
   const [viewsLoading, setViewsLoading] = useState(false);
   const [viewsError, setViewsError] = useState('');
   const [selectedViewKey, setSelectedViewKey] = useState('');
+  const [activeViewKey, setActiveViewKey] = useState('');
+  const [activeViewDetails, setActiveViewDetails] = useState(null);
+  const [activeTableProps, setActiveTableProps] = useState(null);
+  const [tableRenderKey, setTableRenderKey] = useState(0);
   const [dropActive, setDropActive] = useState(false);
   const [dropError, setDropError] = useState('');
-  const [isPinningView, setIsPinningView] = useState(false);
-  const [pinningTargetName, setPinningTargetName] = useState('');
-  const [lastPinnedViewName, setLastPinnedViewName] = useState('');
-  const [expandedDetailKey, setExpandedDetailKey] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(true);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [leftViewStateExpanded, setLeftViewStateExpanded] = useState(false);
   const [hoveredViewKey, setHoveredViewKey] = useState('');
-
-  // Legacy placeholders for compatibility with older drop-zone preview logic.
-  const previewConfig = null;
-  const previewViewName = '';
-
-  const selectedView = useMemo(() => {
-    if (!selectedViewKey) return null;
-    return savedViews.find(view => computeViewKey(view) === selectedViewKey) || null;
-  }, [savedViews, selectedViewKey]);
-
-  useEffect(() => {
-    if (!activePinnedId) {
-      setLastPinnedViewName('');
-    }
-  }, [activePinnedId]);
-
-  const selectedViewDetails = useMemo(() => {
-    if (!selectedView) return null;
-    const viewName = getFieldValue(selectedView, ['viewName', 'view_name', 'VIEW_NAME', 'name']) || '';
-    const datasetSig = getFieldValue(selectedView, ['datasetSig', 'dataset_sig', 'DATASET_SIG', 'dataset', 'DATASET']) || '';
-    const ownerName = getFieldValue(selectedView, ['ownerName', 'owner_name', 'OWNER_NAME', 'owner', 'OWNER']) || '';
-    const rawCreated = getFieldValue(selectedView, ['createdAt', 'created_at', 'CREATED_AT']) || '';
-    const rawContent = getFieldValue(selectedView, ['content', 'CONTENT', 'viewState', 'view_state']);
-
-    let createdDisplay = rawCreated ? String(rawCreated) : '';
-    if (rawCreated) {
-      const parsed = new Date(rawCreated);
-      if (!Number.isNaN(parsed.getTime())) {
-        try {
-          createdDisplay = parsed.toISOString().replace('T', ' ').replace('Z', ' UTC');
-        } catch {
-          createdDisplay = parsed.toLocaleString();
-        }
-      }
-    }
-
-    let formattedContent = '';
-    if (rawContent !== undefined && rawContent !== null) {
-      if (typeof rawContent === 'string') {
-        try {
-          const parsed = JSON.parse(rawContent);
-          formattedContent = JSON.stringify(parsed, null, 2);
-        } catch {
-          formattedContent = rawContent;
-        }
-      } else {
-        try {
-          formattedContent = JSON.stringify(rawContent, null, 2);
-        } catch {
-          formattedContent = String(rawContent);
-        }
-      }
-    }
-
-    return {
-      viewName,
-      datasetSig,
-      ownerName,
-      createdDisplay,
-      formattedContent,
-    };
-  }, [selectedView]);
+  const [savedListCollapsed, setSavedListCollapsed] = useState(false);
+  const [detailsCollapsed, setDetailsCollapsed] = useState(false);
+  const [leftPanelSplit, setLeftPanelSplit] = useState(0.6);
+  const leftPanelContentRef = useRef(null);
+  const pendingResizeCleanupRef = useRef(null);
 
   const detailEntries = useMemo(() => {
-    if (!selectedViewDetails) return [];
+    if (!activeViewDetails) return [];
     return [
-      { key: 'viewName', label: 'View Name', value: selectedViewDetails.viewName },
-      { key: 'datasetSig', label: 'Dataset Signature', value: selectedViewDetails.datasetSig },
-      { key: 'ownerName', label: 'Owner', value: selectedViewDetails.ownerName },
-      { key: 'createdDisplay', label: 'Created At', value: selectedViewDetails.createdDisplay },
-      { key: 'formattedContent', label: 'View State', value: selectedViewDetails.formattedContent, isMultiline: true },
+      { key: 'viewName', label: 'View Name', value: activeViewDetails.viewName },
+      { key: 'datasetSig', label: 'Dataset Signature', value: activeViewDetails.datasetSig },
+      { key: 'ownerName', label: 'Owner', value: activeViewDetails.ownerName },
+      { key: 'createdDisplay', label: 'Created At', value: activeViewDetails.createdDisplay },
+      { key: 'formattedContent', label: 'View State', value: activeViewDetails.formattedContent, isMultiline: true },
     ];
-  }, [selectedViewDetails]);
+  }, [activeViewDetails]);
 
   const summaryDetailEntries = useMemo(
     () => detailEntries.filter(({ key }) => key !== 'formattedContent'),
     [detailEntries],
   );
 
-  const leftPanelViewState = selectedViewDetails?.formattedContent || '';
+  const leftPanelViewState = activeViewDetails?.formattedContent || '';
 
   useEffect(() => {
     let cancelled = false;
@@ -414,106 +426,91 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
   }, []);
 
   useEffect(() => {
-    setExpandedDetailKey('');
     setLeftViewStateExpanded(false);
-  }, [selectedViewKey]);
+  }, [activeViewDetails]);
+
+  useEffect(() => {
+    if (detailsCollapsed) {
+      setLeftViewStateExpanded(false);
+    }
+  }, [detailsCollapsed]);
+
+  const handleLeftPanelResizeStart = useCallback((startEvent) => {
+    if (!leftPanelContentRef.current || savedListCollapsed || detailsCollapsed) {
+      return;
+    }
+    startEvent.preventDefault();
+    const panel = leftPanelContentRef.current;
+    const getClientY = (evt) => (evt.touches && evt.touches.length ? evt.touches[0].clientY : evt.clientY);
+    const originalUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+
+    if (pendingResizeCleanupRef.current) {
+      pendingResizeCleanupRef.current();
+      pendingResizeCleanupRef.current = null;
+    }
+
+    const handlePointerMove = (moveEvent) => {
+      if (moveEvent.cancelable) {
+        moveEvent.preventDefault();
+      }
+      const rect = panel.getBoundingClientRect();
+      if (!rect.height) return;
+      const clientY = getClientY(moveEvent);
+      const relativeY = clientY - rect.top;
+      const minOffset = MIN_LEFT_PANEL_SECTION_HEIGHT;
+      const maxOffset = rect.height - MIN_LEFT_PANEL_SECTION_HEIGHT;
+      const clampedOffset = Math.min(Math.max(relativeY, minOffset), Math.max(minOffset, maxOffset));
+      const ratio = Math.min(0.85, Math.max(0.15, clampedOffset / rect.height));
+      setLeftPanelSplit(ratio);
+    };
+
+    const handlePointerUp = () => {
+      document.body.style.userSelect = originalUserSelect;
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+      window.removeEventListener('touchcancel', handlePointerUp);
+      pendingResizeCleanupRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove, { passive: false });
+    window.addEventListener('touchend', handlePointerUp);
+    window.addEventListener('touchcancel', handlePointerUp);
+    pendingResizeCleanupRef.current = handlePointerUp;
+  }, [detailsCollapsed, savedListCollapsed]);
+
+  const savedSectionStyle = useMemo(() => ({
+    ...bevelSectionStyle,
+    flex: savedListCollapsed ? '0 0 auto' : `${leftPanelSplit} 1 0%`,
+    padding: savedListCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
+    overflow: 'hidden',
+    transition: 'flex 0.18s ease',
+  }), [savedListCollapsed, leftPanelSplit]);
+
+  const detailsSectionStyle = useMemo(() => ({
+    ...bevelSectionStyle,
+    flex: detailsCollapsed ? '0 0 auto' : `${Math.max(0.1, (1 - leftPanelSplit) * 1.3)} 1 0%`,
+    padding: detailsCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
+    overflow: 'hidden',
+    transition: 'flex 0.18s ease',
+  }), [detailsCollapsed, leftPanelSplit]);
+
+  const resizerVisible = !savedListCollapsed && !detailsCollapsed;
+
+  useEffect(() => () => {
+    if (pendingResizeCleanupRef.current) {
+      pendingResizeCleanupRef.current();
+    }
+  }, []);
 
   useEffect(() => {
     refreshHeapUsage();
     onFooterMetricsChange({ rowsFetchedTotal: 0, avgResponseTime: NaN });
   }, [refreshHeapUsage, onFooterMetricsChange]);
-
-  const pinSavedView = useCallback(async (view, options = {}) => {
-    if (!view) {
-      throw new Error('No saved view provided.');
-    }
-    const payload = buildPinPayloadFromView(view);
-    if (!payload || !payload.state) {
-      throw new Error('Selected view does not include the state needed to pin it.');
-    }
-    const { updateUrl = true } = options;
-    const requestPayload = { ...payload };
-    if (!requestPayload.owner) {
-      delete requestPayload.owner;
-    }
-    if (!requestPayload.options || !Object.keys(requestPayload.options).length) {
-      delete requestPayload.options;
-    }
-    if (!requestPayload.schema || !Object.keys(requestPayload.schema).length) {
-      delete requestPayload.schema;
-    }
-    if (!requestPayload.query || !Object.keys(requestPayload.query).length) {
-      delete requestPayload.query;
-    }
-
-    const res = await fetch('/api/table/pin_view', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestPayload),
-    });
-    const ct = res.headers.get('content-type') || '';
-    let resp = null;
-    try {
-      resp = ct.includes('application/json') ? await res.json() : await res.text();
-    } catch {
-      resp = null;
-    }
-
-    if (!res.ok || !resp || !resp.pinId) {
-      const message = resp && resp.error
-        ? resp.error
-        : (typeof resp === 'string' ? resp : `HTTP ${res.status}`);
-      throw new Error(message || 'Failed to pin saved view.');
-    }
-
-    const pinId = String(resp.pinId);
-    setActivePinnedId(pinId);
-
-    if (updateUrl && typeof window !== 'undefined') {
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.set('pinnedId', pinId);
-        url.searchParams.set('page', 'worksheet-viewer');
-        const nextSearch = url.searchParams.toString();
-        window.history.replaceState({}, '', `${url.pathname}?${nextSearch}`);
-      } catch {}
-    }
-
-    return { pinId, ttlMinutes: resp.ttlMinutes };
-  }, [setActivePinnedId]);
-
-  const handleSelectSavedView = useCallback(async (view, options = {}) => {
-    if (!view) return;
-    const { updateUrl = true } = options;
-    const key = computeViewKey(view);
-    if (key) {
-      setSelectedViewKey(key);
-    } else {
-      setSelectedViewKey('');
-    }
-
-    const rawViewName = getFieldValue(view, ['viewName', 'view_name', 'VIEW_NAME', 'name']) || '';
-    const viewName = rawViewName && typeof rawViewName === 'string' ? rawViewName.trim() : '';
-    const effectiveViewName = viewName || 'Saved View';
-    setPinningTargetName(effectiveViewName);
-    setDropError('');
-    setIsPinningView(true);
-    onFooterMetricsChange({ rowsFetchedTotal: 0, avgResponseTime: NaN });
-
-    try {
-      const result = await pinSavedView(view, { updateUrl });
-      setLastPinnedViewName(effectiveViewName);
-      return result;
-    } catch (err) {
-      console.error('Saved view pin failed', err);
-      setLastPinnedViewName('');
-      setDropError(err?.message || 'Failed to pin saved view');
-      throw err;
-    } finally {
-      setIsPinningView(false);
-      setPinningTargetName('');
-    }
-  }, [pinSavedView, onFooterMetricsChange]);
 
   const handleDragStart = useCallback((event, view) => {
     if (!event?.dataTransfer || !view) return;
@@ -527,14 +524,28 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
     }
   }, []);
 
-  const handleDropArea = useCallback(async (event) => {
+  const handleSelectSavedView = useCallback((view) => {
+    if (!view) return;
+    const key = computeViewKey(view);
+    if (key) {
+      setSelectedViewKey(key);
+    } else {
+      setSelectedViewKey('');
+    }
+  }, []);
+
+  const handleDropArea = useCallback((event) => {
     event.preventDefault();
     setDropActive(false);
     setDropError('');
     try {
+      const types = Array.from(event?.dataTransfer?.types || []);
+      if (types.includes('text/pivot-field')) {
+        return;
+      }
       const txt = event?.dataTransfer?.getData('application/json')
         || event?.dataTransfer?.getData('text/plain');
-      if (!txt) throw new Error('Missing saved view payload');
+      if (!txt) return;
       let parsed = null;
       try {
         parsed = JSON.parse(txt);
@@ -548,16 +559,49 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
         throw new Error('Invalid saved view metadata');
       }
 
-      await handleSelectSavedView(viewMeta, { updateUrl: false });
+      const computedKey = computeViewKey(viewMeta);
+      if (computedKey) {
+        setSelectedViewKey(computedKey);
+        setActiveViewKey(computedKey);
+      } else {
+        setSelectedViewKey('');
+        setActiveViewKey('');
+      }
+      const tableBundle = buildTablePropsForView(viewMeta);
+      if (!tableBundle || !tableBundle.tableProps) {
+        throw new Error('Dropped view does not include table state.');
+      }
+      const details = extractViewDetails(viewMeta) || null;
+      setActiveViewDetails(details);
+      setActiveTableProps({ ...tableBundle.tableProps });
+      setTableRenderKey(prev => prev + 1);
+      try {
+        const total = tableBundle.tableProps.totalRows ?? tableBundle.tableProps.data?.length ?? 0;
+        onFooterMetricsChange({ rowsFetchedTotal: total, avgResponseTime: NaN });
+        refreshHeapUsage();
+      } catch {}
+      setLeftViewStateExpanded(false);
     } catch (err) {
       setDropError(err?.message || 'Failed to handle dropped view');
+      setActiveViewKey('');
+      setActiveViewDetails(null);
+      setActiveTableProps(null);
+      setTableRenderKey(0);
     }
-  }, [handleSelectSavedView]);
+  }, [onFooterMetricsChange, refreshHeapUsage]);
 
   useEffect(() => {
     if (!savedViews.length) {
       if (selectedViewKey) {
         setSelectedViewKey('');
+      }
+      if (activeViewKey) {
+        setActiveViewKey('');
+      }
+      if (activeViewDetails || activeTableProps) {
+        setActiveViewDetails(null);
+        setActiveTableProps(null);
+        setTableRenderKey(0);
       }
       return;
     }
@@ -567,19 +611,18 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
       if (!stillExists) {
         setSelectedViewKey('');
       }
-      return;
     }
+  }, [savedViews, selectedViewKey, activeViewKey, activeViewDetails, activeTableProps]);
 
-    if (activePinnedId) {
-      const match = savedViews.find(view => getPinnedIdFromView(view) === activePinnedId);
-      if (match) {
-        const matchKey = computeViewKey(match);
-        if (matchKey) {
-          setSelectedViewKey(matchKey);
-        }
-      }
+  useEffect(() => {
+    if (!activeViewKey) return;
+    const exists = savedViews.some(view => computeViewKey(view) === activeViewKey);
+    if (!exists) {
+      setActiveViewKey('');
+      setActiveViewDetails(null);
+      setActiveTableProps(null);
     }
-  }, [savedViews, selectedViewKey, activePinnedId]);
+  }, [activeViewKey, savedViews]);
 
   return (
     <StandaloneChrome title="Worksheet Viewer">
@@ -626,110 +669,150 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
           </button>
           {leftPanelOpen ? (
             <div
+              ref={leftPanelContentRef}
               style={{
                 flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 12,
+                gap: 8,
                 padding: '12px 10px',
                 minHeight: 0,
               }}
             >
-              <div style={{ ...bevelSectionStyle, flex: 1.5 }}>
-                <div
+              <div style={savedSectionStyle}>
+                <button
+                  type="button"
+                  onClick={() => setSavedListCollapsed(prev => !prev)}
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#9ab5e9',
                     fontSize: '0.78rem',
                     fontWeight: 700,
                     letterSpacing: 0.5,
                     textTransform: 'uppercase',
-                    color: '#9ab5e9',
+                    cursor: 'pointer',
+                    padding: '2px 2px 4px',
                   }}
+                  aria-expanded={!savedListCollapsed}
                 >
-                  Saved Views
-                </div>
-                <div
-                  style={{
-                    flex: 1,
-                    marginTop: 8,
-                    overflowY: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
-                    paddingRight: 2,
-                  }}
-                >
-                  {viewsLoading ? (
-                    <div style={{ color: '#8a9cc0', fontSize: '0.82rem' }}>Loading saved views…</div>
-                  ) : viewsError ? (
-                    <div style={{ color: '#ff8686', fontSize: '0.8rem' }}>{viewsError}</div>
-                  ) : savedViews.length ? (
-                    savedViews.map((view, idx) => {
-                      const viewName = getFieldValue(view, ['viewName', 'view_name', 'VIEW_NAME', 'name']) || 'Untitled view';
-                      const pinnedCandidate = getPinnedIdFromView(view);
-                      const viewKey = computeViewKey(view) || `${idx}`;
-                      const isActive = selectedViewKey
-                        ? viewKey === selectedViewKey
-                        : Boolean(pinnedCandidate && pinnedCandidate === activePinnedId);
-                      const isHover = hoveredViewKey === viewKey;
-                      const key = `${viewKey}|${idx}`;
-                      return (
-                        <button
-                          type="button"
-                          key={key}
-                          draggable
-                          onDragStart={(event) => handleDragStart(event, view)}
-                          onClick={() => {
-                            handleSelectSavedView(view).catch(() => {});
-                          }}
-                          onMouseEnter={() => setHoveredViewKey(viewKey)}
-                          onMouseLeave={() => setHoveredViewKey('')}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 10,
-                            padding: '6px 8px',
-                            borderRadius: 6,
-                            border: 'none',
-                            background: isActive ? 'rgba(14, 99, 156, 0.24)' : (isHover ? 'rgba(23, 34, 49, 0.72)' : 'transparent'),
-                            color: '#e7ecf8',
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            transition: 'background 0.15s ease, border 0.15s ease',
-                          }}
-                        >
-                          <img src={savedViewIcon} alt="" aria-hidden="true" style={{ width: 18, height: 18, opacity: 0.82 }} />
-                          <span style={{ flex: 1, fontSize: '0.76rem', fontWeight: 600, letterSpacing: 0.2 }}>{viewName}</span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div style={{ color: '#8a9cc0', fontSize: '0.8rem' }}>No saved views available.</div>
-                  )}
-                </div>
+                  <span>Saved Views</span>
+                  <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>{savedListCollapsed ? '▸' : '▾'}</span>
+                </button>
+                {!savedListCollapsed ? (
+                  <div
+                    style={{
+                      flex: 1,
+                      marginTop: 6,
+                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      paddingRight: 2,
+                    }}
+                  >
+                    {viewsLoading ? (
+                      <div style={{ color: '#8a9cc0', fontSize: '0.82rem' }}>Loading saved views…</div>
+                    ) : viewsError ? (
+                      <div style={{ color: '#ff8686', fontSize: '0.8rem' }}>{viewsError}</div>
+                    ) : savedViews.length ? (
+                      savedViews.map((view, idx) => {
+                        const viewName = getFieldValue(view, ['viewName', 'view_name', 'VIEW_NAME', 'name']) || 'Untitled view';
+                        const viewKey = computeViewKey(view) || `${idx}`;
+                        const isActive = viewKey === selectedViewKey;
+                        const isHover = hoveredViewKey === viewKey;
+                        const key = `${viewKey}|${idx}`;
+                        return (
+                          <button
+                            type="button"
+                            key={key}
+                            draggable
+                            onDragStart={(event) => handleDragStart(event, view)}
+                            onClick={() => handleSelectSavedView(view)}
+                            onMouseEnter={() => setHoveredViewKey(viewKey)}
+                            onMouseLeave={() => setHoveredViewKey('')}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: isActive ? 'rgba(14, 99, 156, 0.24)' : (isHover ? 'rgba(23, 34, 49, 0.72)' : 'transparent'),
+                              color: '#e7ecf8',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              transition: 'background 0.15s ease, border 0.15s ease',
+                            }}
+                          >
+                            <img src={savedViewIcon} alt="" aria-hidden="true" style={{ width: 18, height: 18, opacity: 0.82 }} />
+                            <span style={{ flex: 1, fontSize: '0.76rem', fontWeight: 600, letterSpacing: 0.2 }}>{viewName}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div style={{ color: '#8a9cc0', fontSize: '0.8rem' }}>No saved views available.</div>
+                    )}
+                  </div>
+                ) : null}
               </div>
-              <div style={{ ...bevelSectionStyle, flex: 1 }}>
+              {resizerVisible ? (
                 <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  onMouseDown={handleLeftPanelResizeStart}
+                  onTouchStart={handleLeftPanelResizeStart}
+                  onDoubleClick={() => setLeftPanelSplit(0.6)}
                   style={{
+                    height: 6,
+                    margin: '2px 6px',
+                    borderRadius: 999,
+                    background: '#1c2433',
+                    cursor: 'row-resize',
+                    flex: '0 0 auto',
+                  }}
+                />
+              ) : null}
+              <div style={detailsSectionStyle}>
+                <button
+                  type="button"
+                  onClick={() => setDetailsCollapsed(prev => !prev)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#9ab5e9',
                     fontSize: '0.78rem',
                     fontWeight: 700,
                     letterSpacing: 0.5,
                     textTransform: 'uppercase',
-                    color: '#9ab5e9',
+                    cursor: 'pointer',
+                    padding: '2px 2px 4px',
                   }}
+                  aria-expanded={!detailsCollapsed}
                 >
-                  Saved View Details
-                </div>
-                <div
-                  style={{
-                    marginTop: 8,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                    overflowY: 'auto',
-                    paddingRight: 2,
-                  }}
-                >
-                  {selectedView ? (
+                  <span>Saved View Details</span>
+                  <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>{detailsCollapsed ? '▸' : '▾'}</span>
+                </button>
+                {!detailsCollapsed ? (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                      overflowY: 'auto',
+                      paddingRight: 2,
+                    }}
+                  >
+                  {activeViewDetails ? (
                     (() => {
                       const hasSummary = summaryDetailEntries.length > 0;
                       const hasViewState = Boolean(leftPanelViewState && leftPanelViewState.trim());
@@ -740,307 +823,177 @@ export default function WorksheetViewer({ onFooterMetricsChange = () => {}, refr
                         <>
                           {hasSummary
                             ? summaryDetailEntries.map(({ key, label, value }) => {
-                                const readableValue = value === undefined || value === null || value === '' ? '—' : String(value);
-                                return (
-                                  <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#6f87b8', fontWeight: 600, letterSpacing: 0.4 }}>
-                                      {label}
-                                    </span>
-                                    <span style={{ fontSize: '0.78rem', color: '#e3e9f7', lineHeight: 1.4 }}>
-                                      {readableValue}
-                                    </span>
-                                  </div>
-                                );
-                              })
-                            : null}
-                          {hasViewState ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <span style={{ fontSize: '0.7rem', color: '#6f87b8', fontWeight: 600, letterSpacing: 0.4 }}>
-                                View State
-                              </span>
-                              <div
-                                style={{
-                                  border: '1px solid #1f2a3b',
-                                  borderRadius: 8,
-                                  background: '#10131b',
-                                  padding: '8px 10px',
-                                  maxHeight: leftViewStateExpanded ? 260 : 96,
-                                  overflow: leftViewStateExpanded ? 'auto' : 'hidden',
-                                }}
-                              >
-                                <pre
+                                  const readableValue = value === undefined || value === null || value === '' ? '—' : String(value);
+                                  return (
+                                    <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                      <span style={{ fontSize: '0.7rem', color: '#6f87b8', fontWeight: 600, letterSpacing: 0.4 }}>
+                                        {label}
+                                      </span>
+                                      <span style={{ fontSize: '0.78rem', color: '#e3e9f7', lineHeight: 1.4 }}>
+                                        {readableValue}
+                                      </span>
+                                    </div>
+                                  );
+                                })
+                              : null}
+                            {hasViewState ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ fontSize: '0.7rem', color: '#6f87b8', fontWeight: 600, letterSpacing: 0.4 }}>
+                                  View State
+                                </span>
+                                <div
                                   style={{
-                                    margin: 0,
-                                    fontSize: '0.72rem',
-                                    lineHeight: 1.5,
-                                    color: '#c7d5f2',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
+                                    border: '1px solid #1f2a3b',
+                                    borderRadius: 8,
+                                    background: '#10131b',
+                                    padding: '8px 10px',
+                                    maxHeight: leftViewStateExpanded ? 260 : 96,
+                                    overflow: leftViewStateExpanded ? 'auto' : 'hidden',
                                   }}
                                 >
-                                  {leftPanelViewState}
-                                </pre>
+                                  <pre
+                                    style={{
+                                      margin: 0,
+                                      fontSize: '0.72rem',
+                                      lineHeight: 1.5,
+                                      color: '#c7d5f2',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                    }}
+                                  >
+                                    {leftPanelViewState}
+                                  </pre>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setLeftViewStateExpanded(prev => !prev)}
+                                  style={{
+                                    alignSelf: 'flex-start',
+                                    padding: '2px 8px',
+                                    borderRadius: 6,
+                                    border: '1px solid #1e5b86',
+                                    background: leftViewStateExpanded ? 'rgba(14, 99, 156, 0.2)' : 'transparent',
+                                    color: '#8cc9ff',
+                                    cursor: 'pointer',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {leftViewStateExpanded ? 'Collapse' : 'Expand'}
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => setLeftViewStateExpanded(prev => !prev)}
-                                style={{
-                                  alignSelf: 'flex-start',
-                                  padding: '2px 8px',
-                                  borderRadius: 6,
-                                  border: '1px solid #1e5b86',
-                                  background: leftViewStateExpanded ? 'rgba(14, 99, 156, 0.2)' : 'transparent',
-                                  color: '#8cc9ff',
-                                  cursor: 'pointer',
-                                  fontSize: '0.7rem',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {leftViewStateExpanded ? 'Collapse' : 'Expand'}
-                              </button>
-                            </div>
                           ) : null}
                         </>
                       );
                     })()
                   ) : (
                     <div style={{ fontSize: '0.78rem', color: '#8a9cc0' }}>
-                      Select a saved view to display its details.
+                      Drop a saved view to display its details here.
                     </div>
                   )}
                 </div>
+                ) : null}
               </div>
             </div>
           ) : null}
         </div>
         <div style={{ flex: 1, display: 'flex', minHeight: 0, background: '#11131a', color: '#f6f8fc', paddingBottom: 16 }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, padding: 24, paddingBottom: 0, minWidth: 0, minHeight: 0 }}>
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (!dropActive) setDropActive(true);
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) {
-                setDropActive(false);
-              }
-            }}
-            onDrop={handleDropArea}
-            style={{
-              border: dropActive ? '2px dashed #0e639c' : '2px dashed #2b3646',
-              background: dropActive ? 'rgba(14, 99, 156, 0.12)' : 'transparent',
-              borderRadius: 12,
-              padding: '20px 18px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 14,
-              color: '#c7d5f2',
-              minHeight: 0,
-            }}
-          >
-            <div style={{ fontSize: '1rem', fontWeight: 600 }}>Drop Zone</div>
-            <div style={{ fontSize: '0.9rem', color: '#9aaac7' }}>
-              Select or drop a saved view to pin it and load the pinned worksheet right here.
-              {previewConfig ? '' : ''}
-            </div>
-            {dropError ? (
-              <div style={{ fontSize: '0.85rem', color: '#ff8686' }}>{dropError}</div>
-            ) : null}
-            {isPinningView ? (
-              <div style={{ fontSize: '0.85rem', color: '#8a9cc0' }}>
-                Pinning {pinningTargetName || 'saved view'}…
-              </div>
-            ) : null}
-            {activePinnedId ? (
-              <>
-                <div style={{ fontSize: '0.82rem', color: '#9aaac7' }}>
-                  Showing pinned view
-                  {(lastPinnedViewName || previewViewName) ? (
-                    <> for <span style={{ color: '#b9cef5', fontWeight: 600 }}>{lastPinnedViewName || previewViewName}</span></>
-                  ) : null}
-                  {` (ID ${activePinnedId}).`}
-                </div>
-                <div style={{ flex: 1, minHeight: 320, border: '1px solid #233043', borderRadius: 10, overflow: 'hidden', background: '#10131b' }}>
-                  <PinnedTableView
-                    pinnedId={activePinnedId}
-                    onMetrics={(metrics) => {
-                      try {
-                        onFooterMetricsChange({
-                          rowsFetchedTotal: metrics?.rowsFetchedTotal ?? 0,
-                          avgResponseTime: metrics?.avgResponseTime ?? NaN,
-                        });
-                        refreshHeapUsage();
-                      } catch (err) {
-                        console.warn('Footer metrics apply failed', err);
-                      }
-                    }}
-                  />
-                </div>
-              </>
-            ) : (
-              <div style={{ fontSize: '0.85rem', color: '#8a9cc0' }}>
-                Once pinned, the worksheet will appear here with full interactivity.
-              </div>
-            )}
-          </div>
-          </div>
-
-          <div style={{ width: detailsOpen ? 380 : 48, transition: 'width 0.2s ease', borderLeft: '1px solid #1c2433', background: '#161b27', display: 'flex', flexDirection: 'column', minHeight: 0, paddingBottom: 12 }}>
-            <button
-              type="button"
-              onClick={() => {
-                setExpandedDetailKey('');
-                setDetailsOpen((prev) => !prev);
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!dropActive) setDropActive(true);
               }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                  setDropActive(false);
+                }
+              }}
+              onDrop={handleDropArea}
               style={{
-                padding: '10px 12px',
-                border: 'none',
-                borderBottom: '1px solid #1c2433',
-                background: 'transparent',
-                color: '#8cc9ff',
+                border: dropActive ? '2px dashed #0e639c' : '2px dashed #2b3646',
+                background: dropActive ? 'rgba(14, 99, 156, 0.12)' : 'transparent',
+                borderRadius: 12,
+                padding: '20px 18px',
+                color: '#c7d5f2',
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: detailsOpen ? 'space-between' : 'center',
-                gap: 8,
-                fontWeight: 600,
-                cursor: 'pointer',
+                flexDirection: 'column',
+                gap: 16,
+                minHeight: 0,
+                overflow: 'hidden',
               }}
             >
-              {detailsOpen ? (
-                <>
-                  <span style={{ fontSize: '0.9rem' }}>Saved View Details</span>
-                  <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>»</span>
-                </>
-              ) : (
-                <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>«</span>
-              )}
-            </button>
-            {detailsOpen ? (
-              <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ fontSize: '1rem', fontWeight: 600 }}>Saved View Details</div>
-                {selectedViewDetails ? (
-                  <>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 12,
-                        paddingBottom: 4,
-                      }}
-                    >
-                      {detailEntries.map(({ key, label, value, isMultiline }) => {
-                        const strValue = value === undefined || value === null || value === '' ? '—' : String(value);
-                        const isExpanded = key === expandedDetailKey;
-                        const truncated = strValue.length > 140 ? `${strValue.slice(0, 140)}…` : strValue;
-                        const allowExpand = key === 'datasetSig' || ((isMultiline && strValue !== '—') || strValue.length > 140);
-                        return (
-                          <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ color: '#8ea2c7', fontSize: '0.74rem', letterSpacing: 0.4, textTransform: 'uppercase', marginLeft: 2 }}>{label}</div>
-                            <div
-                              style={{
-                                border: '1px solid #233043',
-                                borderRadius: 8,
-                                background: '#10131b',
-                                padding: '7px 9px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                minHeight: 32,
-                                fontSize: '0.88rem',
-                                color: '#f6f8fc',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {truncated}
-                            </div>
-                            {allowExpand ? (
-                              <button
-                                type="button"
-                                onClick={() => setExpandedDetailKey(isExpanded ? '' : key)}
-                                style={{
-                                  alignSelf: 'flex-start',
-                                  marginTop: 2,
-                                  padding: '2px 8px',
-                                  borderRadius: 6,
-                                  border: '1px solid #1e5b86',
-                                  background: isExpanded ? 'rgba(14, 99, 156, 0.2)' : 'transparent',
-                                  color: '#8cc9ff',
-                                  cursor: 'pointer',
-                                  fontSize: '0.72rem',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {isExpanded ? 'Collapse' : 'Expand'}
-                              </button>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {expandedDetailKey ? (
-                      (() => {
-                        const expanded = detailEntries.find(({ key }) => key === expandedDetailKey);
-                        if (!expanded) return null;
-                        const readableValue = expanded.isMultiline && expanded.value
-                          ? expanded.value
-                          : (expanded.value === undefined || expanded.value === null || expanded.value === '' ? '—' : String(expanded.value));
-                        const isCode = expanded.key === 'formattedContent';
-                        return (
-                          <div
-                            style={{
-                              border: '1px solid #233043',
-                              borderRadius: 12,
-                              background: '#10131b',
-                              padding: 16,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 12,
-                              maxHeight: 320,
-                              overflow: 'auto',
-                            }}
-                          >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{expanded.label}</div>
-                              <button
-                                type="button"
-                                onClick={() => setExpandedDetailKey('')}
-                                style={{
-                                  padding: '4px 10px',
-                                  borderRadius: 6,
-                                  border: '1px solid #1e5b86',
-                                  background: 'transparent',
-                                  color: '#8cc9ff',
-                                  cursor: 'pointer',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                Close
-                              </button>
-                            </div>
-                            {isCode ? (
-                              <pre style={{ margin: 0, fontSize: '0.78rem', lineHeight: 1.6, color: '#c7d5f2', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                {readableValue || '—'}
-                              </pre>
-                            ) : (
-                              <div style={{ fontSize: '0.88rem', color: '#f6f8fc', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                                {readableValue}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()
-                    ) : null}
-                  </>
-                ) : (
-                  <div style={{ color: '#9aaac7', fontSize: '0.9rem' }}>
-                    Select a saved view from the left panel to inspect its stored metadata and state.
-                  </div>
-                )}
+              <div style={{ fontSize: '1rem', fontWeight: 600 }}>Drop Zone</div>
+              <div style={{ fontSize: '0.9rem', color: '#9aaac7', lineHeight: 1.4 }}>
+                Drag a saved view from the list and drop it here to render its dataset. Selecting a view only highlights it—
+                the table refreshes once the view is dropped.
               </div>
-            ) : null}
+              {dropError ? (
+                <div style={{ fontSize: '0.85rem', color: '#ff8686' }}>{dropError}</div>
+              ) : null}
+
+              {activeTableProps ? (
+                <div
+                  style={{
+                    border: '1px solid #233043',
+                    borderRadius: 12,
+                    background: '#0f141f',
+                    padding: 12,
+                    minHeight: 240,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ fontSize: '0.82rem', color: '#9aaac7', fontWeight: 600 }}>
+                    {activeViewDetails?.viewName ? `View: ${activeViewDetails.viewName}` : 'Dropped View'}
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    {activeTableProps.serverMode || (Array.isArray(activeTableProps.data) && activeTableProps.data.length)
+                      ? (
+                        <TableComponent
+                          key={`drop-table-${tableRenderKey}`}
+                          {...activeTableProps}
+                          buttonsDisabled={false}
+                        />
+                      )
+                      : (
+                        <div
+                          style={{
+                            border: '1px dashed #2b3646',
+                            borderRadius: 12,
+                            padding: '28px 24px',
+                            color: '#8a9cc0',
+                            fontSize: '0.95rem',
+                            textAlign: 'center',
+                            background: 'rgba(17, 23, 34, 0.35)',
+                          }}
+                        >
+                          This saved view does not include row data to display.
+                        </div>
+                      )}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    border: '1px dashed #2b3646',
+                    borderRadius: 12,
+                    padding: '32px 28px',
+                    color: '#8a9cc0',
+                    fontSize: '0.95rem',
+                    background: 'rgba(17, 23, 34, 0.6)',
+                    textAlign: 'center',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: 320,
+                  }}
+                >
+                  Drop a saved view here to render its dataset.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
