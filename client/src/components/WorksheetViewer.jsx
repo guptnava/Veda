@@ -687,7 +687,7 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
 
 export default function WorksheetViewer(props) {
   return (
-    <StandaloneChrome title="Worksheet Viewer">
+    <StandaloneChrome title="Worksheet Studio">
       <WorksheetViewerInner {...props} />
     </StandaloneChrome>
   );

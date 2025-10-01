@@ -26,19 +26,6 @@ const humanizeKey = (key = '') => {
     .join(' ');
 };
 
-const stringifyValue = (value) => {
-  if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleString();
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-  return String(value);
-};
-
 const formatDate = (value) => {
   if (!value) return '';
   const parsed = new Date(value);
@@ -214,12 +201,11 @@ export default function DashboardViewer() {
   const [dashboards, setDashboards] = useState([]);
   const [dashboardsLoading, setDashboardsLoading] = useState(false);
   const [selectedDashboard, setSelectedDashboard] = useState(null);
-  const [dashboardDetails, setDashboardDetails] = useState([]);
-  const [detailsLoading, setDetailsLoading] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [loadingLayout, setLoadingLayout] = useState(false);
   const [draggingWidgetId, setDraggingWidgetId] = useState(null);
   const [activeWidgetId, setActiveWidgetId] = useState(null);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [viewSnapshots, setViewSnapshots] = useState({});
 
   const loadGuardRef = useRef(0);
@@ -292,41 +278,6 @@ export default function DashboardViewer() {
     }
   }, []);
 
-  const loadDashboardDetails = useCallback(async (dashName, owner, guard) => {
-    setDetailsLoading(true);
-    try {
-      if (!dashName) {
-        if (loadGuardRef.current === guard) setDashboardDetails([]);
-        return;
-      }
-      const qs = new URLSearchParams({ name: dashName });
-      if (owner) qs.set('owner', owner);
-      const res = await fetch(`/api/dashboard/details?${qs.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      const payload = ct.includes('application/json') ? await res.json() : await res.text();
-      if (!res.ok) {
-        const errMsg = payload && typeof payload === 'object' && payload.error ? payload.error : `HTTP ${res.status}`;
-        throw new Error(errMsg);
-      }
-      if (loadGuardRef.current !== guard) return;
-      const rows = Array.isArray(payload?.metadata)
-        ? payload.metadata
-        : Array.isArray(payload?.details)
-          ? payload.details
-          : [];
-      setDashboardDetails(rows);
-    } catch (error) {
-      if (loadGuardRef.current === guard) {
-        console.error('Dashboard metadata load failed', error);
-        setDashboardDetails([]);
-      }
-    } finally {
-      if (loadGuardRef.current === guard) {
-        setDetailsLoading(false);
-      }
-    }
-  }, []);
-
   const fetchDashboards = useCallback(async () => {
     setDashboardsLoading(true);
     try {
@@ -369,9 +320,8 @@ export default function DashboardViewer() {
       setMessage('');
       updateDashboardQueryParam(resolved.name);
       loadDashboardLayout(resolved.name, resolved.ownerName, guard);
-      loadDashboardDetails(resolved.name, resolved.ownerName, guard);
     },
-    [loadDashboardDetails, loadDashboardLayout, updateDashboardQueryParam],
+    [loadDashboardLayout, updateDashboardQueryParam],
   );
 
   useEffect(() => {
@@ -514,16 +464,6 @@ export default function DashboardViewer() {
     };
   }, [widgets, viewSnapshots]);
 
-  const primaryDetailPairs = useMemo(() => {
-    if (!selectedDashboard) return [];
-    const pairs = [];
-    if (selectedDashboard.ownerName) pairs.push(['Owner', selectedDashboard.ownerName]);
-    if (selectedDashboard.createdAt) pairs.push(['Created', formatDate(selectedDashboard.createdAt)]);
-    pairs.push(['Widget Count', widgets.length.toString()]);
-    if (layout && layout.description) pairs.push(['Description', layout.description]);
-    return pairs;
-  }, [layout, selectedDashboard, widgets.length]);
-
   const handleDropOnCanvas = useCallback((event) => {
     event.preventDefault();
     const droppedId = event.dataTransfer.getData('text/plain');
@@ -542,7 +482,7 @@ export default function DashboardViewer() {
   }, []);
 
   return (
-    <StandaloneChrome title="Dashboard Viewer">
+    <StandaloneChrome title="Dashboard Browser">
       <div style={{ flex: 1, display: 'flex', background: '#101216', color: '#f7f9fc', minHeight: 0 }}>
         <div
           style={{
@@ -553,6 +493,7 @@ export default function DashboardViewer() {
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
+            overflow: 'auto',
           }}
         >
           <div
@@ -620,7 +561,7 @@ export default function DashboardViewer() {
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.02em', color: '#9fb3d0', textTransform: 'uppercase', marginBottom: 10 }}>
                   Saved Dashboards
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {dashboardsLoading && <div style={{ fontSize: '0.85rem', color: '#8a96aa' }}>Loading…</div>}
                   {!dashboardsLoading && dashboards.length === 0 && (
                     <div style={{ fontSize: '0.85rem', color: '#7685a0' }}>No dashboards saved yet.</div>
@@ -635,25 +576,31 @@ export default function DashboardViewer() {
                         onClick={() => handleSelectDashboard(dash)}
                         style={{
                           display: 'flex',
-                          gap: 12,
+                          gap: 10,
                           alignItems: 'center',
                           textAlign: 'left',
-                          padding: '10px 12px',
-                          borderRadius: 10,
-                          border: isSelected ? '1px solid #3c8bff' : '1px solid #1d2534',
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: 'none',
                           background: isSelected ? '#1a2537' : '#0e1420',
                           color: '#d7e2f5',
                           cursor: 'pointer',
+                          boxShadow: isSelected ? '0 2px 8px rgba(0,0,0,0.35)' : 'none',
+                          transition: 'background 0.15s ease, transform 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = '#142033';
+                          e.currentTarget.style.transform = 'translateY(-2px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = '#0e1420';
+                          e.currentTarget.style.transform = 'translateY(0)';
                         }}
                       >
-                        <img src={savedDashboardGlyph} alt="Dashboard icon" style={{ width: 24, height: 24, opacity: 0.9 }} />
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#e2ebff' }}>{dash.name || 'Untitled Dashboard'}</div>
-                          <div style={{ fontSize: '0.75rem', color: '#8da0bd' }}>
-                            {dash.ownerName ? `Owner: ${dash.ownerName}` : 'Owner: —'}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: '#7a8aa5' }}>
-                            {dash.createdAt ? `Saved ${formatDate(dash.createdAt)}` : 'Saved —'}
+                        <img src={savedDashboardGlyph} alt="Dashboard icon" style={{ width: 18, height: 18, opacity: 0.9 }} />
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#e2ebff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {dash.name || 'Untitled Dashboard'}
                           </div>
                         </div>
                       </button>
@@ -661,51 +608,13 @@ export default function DashboardViewer() {
                   })}
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.02em', color: '#9fb3d0', textTransform: 'uppercase', marginBottom: 10 }}>
-                  Saved Dashboard Details
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {primaryDetailPairs.length > 0 && (
-                    <div style={{ background: '#101722', border: '1px solid #1d2735', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {primaryDetailPairs.map(([label, value]) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: '0.82rem' }}>
-                          <span style={{ color: '#8597b5' }}>{label}</span>
-                          <span style={{ color: '#dfe8fb', textAlign: 'right' }}>{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {detailsLoading && <div style={{ fontSize: '0.82rem', color: '#8a96aa' }}>Loading metadata…</div>}
-                  {!detailsLoading && dashboardDetails.length === 0 && (
-                    <div style={{ fontSize: '0.82rem', color: '#7685a0' }}>No metadata available.</div>
-                  )}
-                  {!detailsLoading && dashboardDetails.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {dashboardDetails.map((row, idx) => (
-                        <div key={`meta-${idx}`} style={{ background: '#0f141f', border: '1px solid #1d2735', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {dashboardDetails.length > 1 && (
-                            <div style={{ color: '#7c8fb0', fontSize: '0.75rem' }}>Record {idx + 1}</div>
-                          )}
-                          {Object.entries(row || {}).map(([key, value]) => (
-                            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.8rem' }}>
-                              <span style={{ color: '#7f92b0' }}>{humanizeKey(key)}</span>
-                              <span style={{ color: '#dce5f9', textAlign: 'right' }}>{stringifyValue(value)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
             </div>
           )}
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid #1d2735', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.35rem' }}>{name || 'Dashboard Viewer'}</div>
-            {message && <div style={{ color: '#9cdcfe', fontSize: '0.9rem' }}>{message}</div>}
+          <div style={{ padding: '6px 14px', borderBottom: '1px solid #1d2735', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.85rem', lineHeight: 1.2 }}>{name || 'Dashboard Browser'}</div>
+            {message && <div style={{ color: '#9cdcfe', fontSize: '0.72rem', lineHeight: 1.1 }}>{message}</div>}
           </div>
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
             <div
@@ -713,8 +622,8 @@ export default function DashboardViewer() {
               onDrop={handleDropOnCanvas}
               style={{
                 flex: 1,
-                padding: 24,
-                overflowY: 'auto',
+                padding: 16,
+                overflow: 'auto',
                 borderRight: '1px solid #1d2735',
                 background: '#0d1119',
                 transition: 'outline 0.2s ease',
@@ -735,7 +644,6 @@ export default function DashboardViewer() {
                     const preview = widgetPreviewProps[idx] || null;
                     const tableProps = preview && preview.tableProps ? preview.tableProps : null;
                     const infoMessage = preview && preview.message ? preview.message : null;
-                    const hasExportContext = tableProps && tableProps.exportContext;
                     return (
                       <div
                         key={key}
@@ -758,22 +666,14 @@ export default function DashboardViewer() {
                           gap: 12,
                         }}
                       >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ color: '#fff', fontWeight: 600 }}>
-                            {widget.type === 'view' ? `View: ${widget.viewName || 'Untitled'}` : humanizeKey(widget.type || 'Widget')}
-                          </div>
-                          <div style={{ color: '#9ab5da', fontSize: '0.82rem' }}>
-                            {widget.datasetSig ? `Dataset: ${widget.datasetSig}` : 'Dataset: n/a'}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.85rem' }}>
+                            {widget.type === 'view' ? (widget.viewName || 'Untitled view') : humanizeKey(widget.type || 'Widget')}
                           </div>
                         </div>
                         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                           {tableProps ? (
-                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <div style={{ color: '#b8c3d6', fontSize: '0.82rem' }}>
-                                {hasExportContext
-                                  ? 'Live preview powered by the saved view configuration.'
-                                  : 'Snapshot preview shows the most recently saved dataset state.'}
-                              </div>
+                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                               <div style={{ flex: 1, minHeight: 0, border: '1px solid #1d2735', borderRadius: 8, overflow: 'hidden', background: '#0e1624' }}>
                                 <TableComponent
                                   {...tableProps}
@@ -798,54 +698,93 @@ export default function DashboardViewer() {
                 </div>
               )}
             </div>
-            <div style={{ width: 280, background: '#101520', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#dce6f8' }}>Widget Palette</div>
-              <div style={{ fontSize: '0.78rem', color: '#7a8aa5' }}>
-                Drag a widget card into the layout area to spotlight it. Clicking highlights the widget in-place.
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
-                {widgets.length === 0 && (
-                  <div style={{ fontSize: '0.8rem', color: '#7685a0' }}>Nothing to drag yet.</div>
-                )}
-                {widgets.map((widget, idx) => {
-                  const key = deriveWidgetKey(widget, idx);
-                  const isActive = activeWidgetId && key === activeWidgetId;
-                  return (
-                    <div
-                      key={`palette-${key}`}
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData('text/plain', key);
-                        event.dataTransfer.effectAllowed = 'move';
-                        setDraggingWidgetId(key);
-                      }}
-                      onDragEnd={() => setDraggingWidgetId(null)}
-                      onClick={() => setActiveWidgetId(key)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        padding: '10px 12px',
-                        borderRadius: 10,
-                        border: isActive ? '1px solid #3c8bff' : '1px solid #1d2735',
-                        background: isActive ? '#182539' : '#0f1726',
-                        color: '#d7e2f5',
-                        cursor: 'grab',
-                      }}
-                    >
-                      <img src={widgetGlyph} alt="Widget" style={{ width: 22, height: 22, opacity: 0.85 }} />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#e2ebff' }}>
-                          {widget.type === 'view' ? `View: ${widget.viewName}` : humanizeKey(widget.type || `Widget ${idx + 1}`)}
+            <div
+              style={{
+                width: paletteCollapsed ? 48 : 280,
+                background: '#101520',
+                padding: paletteCollapsed ? '12px 10px' : 20,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: paletteCollapsed ? 12 : 14,
+                alignItems: paletteCollapsed ? 'center' : 'stretch',
+                transition: 'width 0.2s ease',
+                borderLeft: '1px solid #1d2735',
+                overflow: 'auto',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setPaletteCollapsed((prev) => !prev)}
+                title={paletteCollapsed ? 'Expand palette' : 'Collapse palette'}
+                style={{
+                  width: paletteCollapsed ? 28 : '100%',
+                  alignSelf: paletteCollapsed ? 'center' : 'flex-end',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  padding: paletteCollapsed ? 6 : '6px 10px',
+                  borderRadius: 8,
+                  border: '1px solid #1d2735',
+                  background: '#162238',
+                  color: '#dce6f8',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                }}
+              >
+                {paletteCollapsed ? '≡' : 'Hide Widgets'}
+              </button>
+              {!paletteCollapsed && (
+                <>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#dce6f8' }}>Widget Palette</div>
+                  <div style={{ fontSize: '0.78rem', color: '#7a8aa5' }}>
+                    Drag a widget card into the layout area to spotlight it. Clicking highlights the widget in-place.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+                    {widgets.length === 0 && (
+                      <div style={{ fontSize: '0.8rem', color: '#7685a0' }}>Nothing to drag yet.</div>
+                    )}
+                    {widgets.map((widget, idx) => {
+                      const key = deriveWidgetKey(widget, idx);
+                      const isActive = activeWidgetId && key === activeWidgetId;
+                      return (
+                        <div
+                          key={`palette-${key}`}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData('text/plain', key);
+                            event.dataTransfer.effectAllowed = 'move';
+                            setDraggingWidgetId(key);
+                          }}
+                          onDragEnd={() => setDraggingWidgetId(null)}
+                          onClick={() => setActiveWidgetId(key)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 12,
+                            padding: '10px 12px',
+                            borderRadius: 10,
+                            border: isActive ? '1px solid #3c8bff' : '1px solid #1d2735',
+                            background: isActive ? '#182539' : '#0f1726',
+                            color: '#d7e2f5',
+                            cursor: 'grab',
+                          }}
+                        >
+                          <img src={widgetGlyph} alt="Widget" style={{ width: 22, height: 22, opacity: 0.85 }} />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#e2ebff' }}>
+                              {widget.type === 'view' ? `View: ${widget.viewName}` : humanizeKey(widget.type || `Widget ${idx + 1}`)}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: '#8da0bd' }}>
+                              {widget.datasetSig ? `Dataset: ${widget.datasetSig}` : 'Drag to focus'}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#8da0bd' }}>
-                          {widget.datasetSig ? `Dataset: ${widget.datasetSig}` : 'Drag to focus'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

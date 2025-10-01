@@ -24,6 +24,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // removed unused imports
 import TableComponent from './components/TableComponent';
 import Composer from './components/Composer';
+import dashboardTheme from './theme/dashboardTheme';
 
 
 
@@ -43,6 +44,29 @@ const components = {
   },
 };
 
+const theme = dashboardTheme;
+
+const rootThemeVars = {
+  '--veda-bg': theme.background,
+  '--veda-surface': theme.surface,
+  '--veda-panel': theme.panel,
+  '--veda-panel-muted': theme.panelMuted,
+  '--veda-card': theme.card,
+  '--veda-border': theme.border,
+  '--veda-border-muted': theme.borderMuted,
+  '--veda-text-primary': theme.textPrimary,
+  '--veda-text-secondary': theme.textSecondary,
+  '--veda-text-muted': theme.textMuted,
+  '--veda-text-subtle': theme.textSubtle,
+  '--veda-accent': theme.accent,
+  '--veda-accent-soft': theme.accentSoft,
+  '--veda-accent-soft-hover': theme.accentSoftHover,
+  '--veda-button-bg': theme.buttonBg,
+  '--veda-button-hover': theme.buttonBgHover,
+  '--veda-button-border': theme.buttonBorder,
+  '--veda-overlay': theme.overlay,
+};
+
 
 export default function App() {
   // If dashboard mode (?dashboard=1), render the builder page
@@ -51,14 +75,14 @@ export default function App() {
     const pinnedIdParam = params.get('pinnedId');
     if (params.get('dashboard2') === '1') {
       return (
-        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+        <div style={{ background: theme.background, color: theme.textPrimary, minHeight: '100vh' }}>
           <TableauStyleDashboard />
         </div>
       );
     }
     if (params.get('dashboard') === '1') {
       return (
-        <div style={{ background: '#0b0b0b', minHeight: '100vh' }}>
+        <div style={{ background: theme.background, color: theme.textPrimary, minHeight: '100vh' }}>
           <TableauStyleDashboard />
         </div>
       );
@@ -790,36 +814,41 @@ export default function App() {
     gap: 10,
     padding: '8px 10px',
     borderRadius: 8,
-    border: '1px solid #343a46',
-    background: '#262930',
-    color: '#e2ebff',
+    border: `1px solid ${theme.border}`,
+    background: theme.buttonBg,
+    color: theme.textSecondary,
     fontSize: '0.85rem',
     cursor: 'pointer',
-    transition: 'background 120ms ease, border 120ms ease',
+    transition: 'background 120ms ease, border 120ms ease, color 120ms ease',
   };
 
   const toolsetIconStyle = { width: 18, height: 18, display: 'block' };
 
   const onToolsetHoverIn = (e) => {
-    e.currentTarget.style.background = '#30343d';
-    e.currentTarget.style.borderColor = '#3d4451';
+    e.currentTarget.style.background = theme.buttonBgHover;
+    e.currentTarget.style.borderColor = theme.accent;
+    e.currentTarget.style.color = theme.textPrimary;
   };
 
   const onToolsetHoverOut = (e) => {
-    e.currentTarget.style.background = '#262930';
-    e.currentTarget.style.borderColor = '#343a46';
+    e.currentTarget.style.background = theme.buttonBg;
+    e.currentTarget.style.borderColor = theme.border;
+    e.currentTarget.style.color = theme.textSecondary;
+  };
+
+  const appContainerStyle = {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100vh',
+    width: '100%',
+    backgroundColor: theme.background,
+    color: theme.textPrimary,
+    fontFamily: 'Inter, sans-serif',
+    ...rootThemeVars,
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      width: '100%',
-      backgroundColor: '#1e1e1e',
-      color: '#d4d4d4',
-      fontFamily: 'Inter, sans-serif'
-    }}>
+    <div style={appContainerStyle}>
       
   <HeaderBar
         isPanelOpen={isPanelOpen}
@@ -910,7 +939,7 @@ export default function App() {
 
                   {isTableMessage && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '10px' }}>
-                      <p style={{ fontSize: '0.9rem', color: '#ccc' }}>
+                      <p style={{ fontSize: '0.9rem', color: theme.textSubtle }}>
                         Displaying data. You can filter the table or generate a graph below.
                       </p>
                       <TableComponent
@@ -983,7 +1012,7 @@ export default function App() {
               </div>
               {currentStreamingMessage.tableData && currentStreamingMessage.tableData.length > 0 && (
                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '10px' }}>
-                    <p style={{ fontSize: '0.9rem', color: '#ccc' }}>
+                    <p style={{ fontSize: '0.9rem', color: theme.textSubtle }}>
                         Displaying data. You can filter the table or generate a graph below.
                     </p>
                     <TableComponent
@@ -1013,7 +1042,7 @@ export default function App() {
           )}
           <div ref={messagesEndRef} />
         </main>
-        <div style={{ flexShrink: 0, width: '100%', background: '#131417', borderTop: '1px solid #1f2024', padding: 0 }}>
+        <div style={{ flexShrink: 0, width: '100%', background: theme.surface, borderTop: `1px solid ${theme.border}`, padding: 0 }}>
           <Composer inputRef={inputRef} loading={loading} onSubmit={sendMessage} onKeyDown={handleKeyDown} onStop={stopStreaming} />
         </div>
       </div>
@@ -1025,8 +1054,8 @@ export default function App() {
             position: 'fixed',
             right: 24,
             bottom: 86,
-            background: 'rgba(18,20,23,0.98)',
-            border: '1px solid rgba(44,54,66,0.7)',
+            background: theme.overlay,
+            border: `1px solid ${theme.borderMuted}`,
             borderRadius: 12,
             padding: '12px 14px',
             display: 'flex',
@@ -1064,9 +1093,9 @@ export default function App() {
               setIsToolsetOpen(false);
             }}
           >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <img src={chartGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              Dashboard Builder
+              Dashboard Studio
             </span>
           </button>
           <button
@@ -1079,9 +1108,9 @@ export default function App() {
               setIsToolsetOpen(false);
             }}
           >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <img src={worksheetViewerGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              Worksheet Viewer
+              Worksheet Studio
             </span>
           </button>
           <button
@@ -1094,9 +1123,9 @@ export default function App() {
               setIsToolsetOpen(false);
             }}
           >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <img src={dashboardViewerGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              Dashboard Viewer
+              Dashboard Browser
             </span>
           </button>
           <button

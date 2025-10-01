@@ -1,4 +1,4 @@
-# InsightFlow Lite
+# ConBI Lite
 
 Owner: Naveen Gupta 
 Contact: g_naveen@hotmail.com

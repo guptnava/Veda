@@ -1032,13 +1032,12 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   const vCols = displayColumns;
   const vGridTemplate = React.useMemo(() => vCols.map(c => `${(colWidths[c] || 150)}px`).join(' '), [vCols.join(','), colWidths]);
   const vTotalWidth = React.useMemo(() => vCols.reduce((acc, c) => acc + (colWidths[c] || 150), 0), [vCols.join(','), colWidths]);
-  const indexColWidth = 56;
+  const indexColWidth = 0;
   const vScale = (isVirtualized && viewportWidth) ? Math.max(1, (viewportWidth) / Math.max(1, vTotalWidth + indexColWidth)) : 1;
   const vGridTemplateScaled = React.useMemo(() => vCols.map(c => `${Math.round(((colWidths[c] || 150)) * vScale)}px`).join(' '), [vCols.join(','), colWidths, vScale]);
-  const indexColWidthScaled = Math.round(indexColWidth * vScale);
-  const vGridTemplateWithIndex = `${indexColWidth}px ${vGridTemplate}`;
-  const vGridTemplateScaledWithIndex = `${indexColWidthScaled}px ${vGridTemplateScaled}`;
-  const contentWidth = (isVirtualized && !isPivotView && viewportWidth) ? Math.max(viewportWidth, vTotalWidth + indexColWidth) : null;
+  const vGridTemplateWithIndex = vGridTemplate;
+  const vGridTemplateScaledWithIndex = vGridTemplateScaled;
+  const contentWidth = (isVirtualized && !isPivotView && viewportWidth) ? Math.max(viewportWidth, vTotalWidth) : null;
   const vFreezeLeftScaled = React.useMemo(() => {
     const map = {};
     let left = 0;
@@ -1049,6 +1048,14 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
     }
     return map;
   }, [vCols.join(','), freezeCount, colWidths, vScale]);
+
+  const getEffectiveColumnWidth = React.useCallback((header) => {
+    const base = colWidths[header] || 150;
+    if (isVirtualized && !isPivotView && viewportWidth) {
+      return Math.max(60, Math.round(base * vScale));
+    }
+    return base;
+  }, [colWidths, isVirtualized, isPivotView, viewportWidth, vScale]);
 
   useEffect(() => {
     if (!isVirtualized) return;
@@ -3553,17 +3560,27 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
       {/* Table */}
       {((!isPivotView) || (isPivotView && pivotConfig.columns.length > 0 && ((pivotConfig.measures && pivotConfig.measures.length) || pivotConfig.aggColumn) && ((pivotConfig.funcs && pivotConfig.funcs.length) || pivotConfig.aggFunc))) && (
       <div style={{ overflowX: 'auto' }} ref={scrollerRef}>
-      <table role={isPivotView ? 'treegrid' : 'grid'} aria-readonly="true" style={{ borderCollapse: "collapse", width: contentWidth ? `${contentWidth}px` : "100%", minWidth: "600px", fontSize: `${fontSize}px` }}>
+      <table
+        role={isPivotView ? 'treegrid' : 'grid'}
+        aria-readonly="true"
+        style={{
+          borderCollapse: (isVirtualized && !isPivotView) ? 'separate' : 'collapse',
+          borderSpacing: (isVirtualized && !isPivotView) ? 0 : undefined,
+          width: contentWidth ? `${contentWidth}px` : '100%',
+          minWidth: '600px',
+          fontSize: `${fontSize}px`,
+        }}
+      >
+        {!isPivotView && (
+          <colgroup>
+            {vCols.map((header) => {
+              const w = getEffectiveColumnWidth(header);
+              return <col key={`col-${header}`} style={{ width: `${w}px`, minWidth: `${w}px` }} />;
+            })}
+          </colgroup>
+        )}
         <thead>
           <tr>
-            {isVirtualized && !isPivotView && (
-              <th
-                key="__index"
-                style={{ position: 'sticky', top: 0, left: 0, zIndex: 4, border: '1px solid #ddd', padding: '5px', backgroundColor: '#0e639c', color: 'white', textAlign: 'right', whiteSpace: 'nowrap', width: `${indexColWidthScaled || indexColWidth}px`, minWidth: `${indexColWidthScaled || indexColWidth}px` }}
-              >
-                #
-              </th>
-            )}
             {/* selection checkbox column removed */}
             {(isPivotView ? (() => {
               const measures = (pivotConfig.measures && pivotConfig.measures.length) ? pivotConfig.measures : (pivotConfig.aggColumn ? [pivotConfig.aggColumn] : []);
@@ -3625,7 +3642,36 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
                   });
                 }}
                 onClick={(e) => !isPivotView && handleSort(header, e.shiftKey)}
-                style={{ position: 'sticky', top: 0, zIndex: (idx < freezeCount ? 3 : 2), border: "1px solid #ddd", padding: "5px 28px 5px 5px", backgroundColor: "#0e639c", color: "white", textAlign: "left", whiteSpace: "nowrap", cursor: isPivotView ? "default" : "pointer", userSelect: "none", width: (isVirtualized && !isPivotView) ? `${Math.round(((colWidths[header] || 150)) * vScale)}px` : (colWidths[header] ? `${colWidths[header]}px` : undefined), minWidth: (isVirtualized && !isPivotView) ? `${Math.round(((colWidths[header] || 150)) * vScale)}px` : (colWidths[header] ? `${colWidths[header]}px` : undefined), ...(idx < freezeCount && !isPivotView ? { left: `${(isVirtualized ? (indexColWidthScaled + (vFreezeLeftScaled[header] || 0)) : (freezeLeft[header] || 0))}px` } : {}) }}
+                style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: (idx < freezeCount ? 3 : 2),
+                  boxSizing: 'border-box',
+                  padding: '5px 28px 5px 5px',
+                  backgroundColor: '#0e639c',
+                  color: 'white',
+                  textAlign: 'left',
+                  whiteSpace: 'nowrap',
+                  cursor: isPivotView ? 'default' : 'pointer',
+                  userSelect: 'none',
+                  width: (isVirtualized && !isPivotView)
+                    ? `${Math.round(((colWidths[header] || 150)) * vScale)}px`
+                    : (colWidths[header] ? `${colWidths[header]}px` : undefined),
+                  minWidth: (isVirtualized && !isPivotView)
+                    ? `${Math.round(((colWidths[header] || 150)) * vScale)}px`
+                    : (colWidths[header] ? `${colWidths[header]}px` : undefined),
+                  ...(isVirtualized && !isPivotView
+                    ? {
+                        borderTop: '1px solid #ddd',
+                        borderBottom: '1px solid #ddd',
+                        borderRight: '1px solid #ddd',
+                        ...((idx === 0 || idx < freezeCount) ? { borderLeft: '1px solid #ddd' } : {}),
+                      }
+                    : { border: '1px solid #ddd' }),
+                  ...(idx < freezeCount && !isPivotView
+                    ? { left: `${(isVirtualized ? (vFreezeLeftScaled[header] || 0) : (freezeLeft[header] || 0))}px` }
+                    : {}),
+                }}
               >
                 <span onClick={(e) => {
                   if (!(e.ctrlKey || e.metaKey)) return;
@@ -4024,36 +4070,17 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
                 >
                   {({ index, style }) => {
                     const row = rows[index];
-                    const isFirstRow = index === 0;
                     return (
                       <div
                         key={index}
                         style={{ ...style, display: 'grid', gridTemplateColumns: (viewportWidth ? vGridTemplateScaledWithIndex : vGridTemplateWithIndex), borderBottom: '1px solid #ddd', alignItems: 'stretch' }}
                       >
-                        {/* Index column */}
-                        <div
-                          style={{
-                            borderRight: '1px solid #ddd',
-                            borderBottom: '1px solid #ddd',
-                            ...(isFirstRow ? { borderTop: '1px solid #ddd' } : {}),
-                            padding: '5px',
-                            whiteSpace: 'nowrap',
-                            textOverflow: 'ellipsis',
-                            overflow: 'hidden',
-                            textAlign: 'right',
-                            background: '#111',
-                            color: '#ddd',
-                            boxSizing: 'border-box',
-                            position: 'sticky',
-                            left: 0,
-                            zIndex: 2
-                          }}
-                        >{index + 1}</div>
                         {vCols.map((header, i) => {
                           const val = row[header];
                           const align = numericCols.has(header) ? 'right' : 'left';
                           const baseStyle = {
                             borderRight: '1px solid #ddd',
+                            borderTop: index === 0 ? '1px solid #ddd' : undefined,
                             padding: '5px',
                             whiteSpace: 'nowrap',
                             textOverflow: 'ellipsis',
@@ -4069,8 +4096,16 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
                               key={`${index}-${header}`}
                               style={{
                                 ...baseStyle,
-                                ...cond,
-                                ...(i < freezeCount ? { position: 'sticky', left: `${(indexColWidthScaled + (vFreezeLeftScaled[header] || 0))}px`, zIndex: 1, background: (cond.backgroundColor ? cond.backgroundColor : '#111') } : {})
+                            ...cond,
+                                ...(i < freezeCount
+                                ? {
+                                    position: 'sticky',
+                                    left: `${(vFreezeLeftScaled[header] || 0)}px`,
+                                    zIndex: 1,
+                                    background: (cond.backgroundColor ? cond.backgroundColor : '#111'),
+                                    borderLeft: '1px solid #ddd',
+                                  }
+                                : {}),
                               }}
                               title={String(val ?? '')}
                               onClick={(e) => {

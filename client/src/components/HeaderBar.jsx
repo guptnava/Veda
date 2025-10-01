@@ -2,6 +2,9 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import vedaIcon from '../icons/aimesh.svg';
 import menuIcon from '../icons/hamburger.png';
+import dashboardTheme from '../theme/dashboardTheme';
+
+const theme = dashboardTheme;
 
 const HeaderBar = ({
   isPanelOpen,
@@ -46,7 +49,7 @@ const HeaderBar = ({
   settingsMenuOpen,
   onSettingsMenuChange,
   settingsAnchorRect,
-  title = 'InsightFlow',
+  title = 'ConBI',
   logoUrl = vedaIcon,
 
   // ✅ NEW: overridable icon URLs (use your own relative paths)
@@ -83,6 +86,23 @@ const HeaderBar = ({
   // ✅ NEW: consistent icon image styling
   const iconImgLg = { width: 18, height: 18, display: 'block' };
   const settingsFontSize = '0.8rem';
+  const formLabelStyle = { color: theme.textMuted, fontSize: settingsFontSize };
+  const headingTextStyle = { color: theme.textSecondary, fontWeight: 600 };
+  const subtleTextStyle = { color: theme.textSubtle, fontSize: '0.75rem' };
+  const inputBaseStyle = {
+    padding: '6px 8px',
+    borderRadius: 6,
+    border: `1px solid ${theme.border}`,
+    background: theme.panelMuted,
+    color: theme.textPrimary,
+  };
+  const selectBaseStyle = {
+    padding: '4px 6px',
+    borderRadius: 6,
+    border: `1px solid ${theme.border}`,
+    background: theme.panelMuted,
+    color: theme.textSecondary,
+  };
 
   useLayoutEffect(() => {
     if (!showSettings) return;
@@ -135,8 +155,39 @@ const HeaderBar = ({
   const perm = tableButtonPermissions || {};
   const togglePerm = (key) => setTableButtonPermissions?.((prev) => ({ ...prev, [key]: !prev?.[key] }));
 
-  const brandText = String(title || 'InsightFlow');
-  const isInsightFlow = /insight\s*flow/i.test(brandText);
+  const brandText = String(title || 'ConBI');
+  const isConBI = /con\s*bi/i.test(brandText);
+
+  useEffect(() => {
+    try {
+      if (typeof document !== 'undefined') {
+        if (brandText) {
+          document.title = brandText;
+        }
+        if (logoUrl) {
+          const head = document.head || document.getElementsByTagName('head')[0];
+          if (head) {
+            head
+              .querySelectorAll("link[rel~='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")
+              .forEach((node) => head.removeChild(node));
+
+            const createLink = (rel) => {
+              const link = document.createElement('link');
+              link.rel = rel;
+              link.href = logoUrl;
+              return link;
+            };
+
+            head.appendChild(createLink('icon'));
+            head.appendChild(createLink('shortcut icon'));
+            head.appendChild(createLink('apple-touch-icon'));
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('HeaderBar head sync failed', err);
+    }
+  }, [brandText, logoUrl]);
 
   return (
     <header
@@ -146,11 +197,14 @@ const HeaderBar = ({
         justifyContent: 'space-between',
         gap: 12,
         flexWrap: 'wrap',
-        padding: '6px 10px',
-        background: '#0e639c',
+        padding: '8px 16px',
+        background: theme.panel,
+        borderBottom: `1px solid ${theme.border}`,
+        color: theme.textPrimary,
         position: 'relative',
         width: '100%',
         boxSizing: 'border-box',
+        boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
       }}
     >
       <style>{`
@@ -188,8 +242,8 @@ const HeaderBar = ({
             height: 34,
             borderRadius: '50%',
             padding: 1,
-            background: 'conic-gradient(from 0deg, #00c6ff 0%, #0072ff 30%, #00e5ff 60%, #00c6ff 100%)',
-            boxShadow: '0 0 6px rgba(0, 0, 0, 0.25), 0 0 10px rgba(14,99,156,0.35)',
+            background: 'conic-gradient(from 0deg, rgba(60,139,255,0.9) 0%, rgba(16,22,33,0.9) 45%, rgba(60,139,255,0.6) 100%)',
+            boxShadow: '0 0 6px rgba(0, 0, 0, 0.35), 0 0 12px rgba(60,139,255,0.4)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -216,7 +270,7 @@ const HeaderBar = ({
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'scale(1.06) rotate(-2deg)';
-              e.currentTarget.style.boxShadow = 'inset 0 0 8px rgba(0,0,0,0.45), 0 4px 14px rgba(14,99,156,0.45)';
+              e.currentTarget.style.boxShadow = 'inset 0 0 8px rgba(0,0,0,0.45), 0 4px 14px rgba(60,139,255,0.45)';
               e.currentTarget.style.filter = 'saturate(1.22) contrast(1.08)';
             }}
             onMouseOut={(e) => {
@@ -230,44 +284,35 @@ const HeaderBar = ({
         {/* Branded logotype */}
         <div aria-label={brandText} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.05 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            {isInsightFlow ? (
+            {isConBI ? (
               <>
                 <span style={{
                   fontSize: '1.55rem',
                   fontWeight: 900,
                   letterSpacing: '0.6px',
-                  color: 'transparent',
-                  background: 'linear-gradient(180deg, #b3ecff 0%, #6fe3ff 45%, #2dd4f7 100%)',
-                  WebkitBackgroundClip: 'text',
-                  backgroundClip: 'text',
-                  textShadow: '0 1px 0 rgba(0,0,0,0.25)'
-                }}>Insight</span>
+                  color: theme.textPrimary,
+                  textShadow: '0 1px 0 rgba(0,0,0,0.35)'
+                }}>Con</span>
                 <span style={{
                   fontSize: '1.7rem',
                   fontWeight: 1000,
                   letterSpacing: '0.4px',
-                  color: 'transparent',
-                  background: 'linear-gradient(180deg, #e1d1ff 0%, #b39cff 45%, #7a7cff 100%)',
-                  WebkitBackgroundClip: 'text',
-                  backgroundClip: 'text',
-                  textShadow: '0 1px 0 rgba(0,0,0,0.25)'
-                }}>Flow</span>
+                  color: theme.accent,
+                  textShadow: '0 1px 0 rgba(0,0,0,0.4)'
+                }}>BI</span>
               </>
             ) : (
               <span style={{
-                fontSize: title === 'Worksheet Viewer' ? '1.02rem' : title === 'Dashboard Viewer' || title === 'Dashboard Builder' ? '1.02rem' : '1.7rem',
+                fontSize: title === 'Worksheet Studio' ? '1.02rem' : title === 'Dashboard Browser' || title === 'Dashboard Studio' ? '1.02rem' : '1.7rem',
                 fontWeight: 1000,
                 letterSpacing: '0.6px',
-                color: 'transparent',
-                background: 'linear-gradient(180deg, #b3ecff 0%, #6fe3ff 45%, #2dd4f7 100%)',
-                WebkitBackgroundClip: 'text',
-                backgroundClip: 'text',
-                textShadow: '0 1px 0 rgba(0,0,0,0.25)'
+                color: theme.textPrimary,
+                textShadow: '0 1px 0 rgba(0,0,0,0.35)'
               }}>{brandText}</span>
             )}
           </div>
           {/* Accent bar */}
-          <div style={{ height: 3, marginTop: 4, borderRadius: 6, width: '100%', maxWidth: 160, background: 'linear-gradient(90deg, rgba(255,255,255,0.75) 0%, #7ad3ff 35%, #6aa8ff 70%, rgba(255,255,255,0.75) 100%)', boxShadow: '0 2px 8px rgba(0,0,0,0.25), 0 0 10px rgba(122,211,255,0.35)' }} />
+          <div style={{ height: 3, marginTop: 4, borderRadius: 6, width: '100%', maxWidth: 160, background: theme.accent, boxShadow: '0 2px 10px rgba(60,139,255,0.35)' }} />
         </div>
       </div>
 
@@ -279,12 +324,13 @@ const HeaderBar = ({
             style={{
               position: 'fixed',
               top: menuPos.top, right: menuPos.right,
-              background: '#1f1f1f', border: '1px solid #444',
+              background: theme.surface, border: `1px solid ${theme.border}`,
               borderRadius: 8, padding: 10, zIndex: 100000,
               display: 'flex', flexDirection: 'column', gap: 8,
               width: 520, maxHeight: '70vh', overflow: 'auto',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-              fontSize: settingsFontSize
+              boxShadow: '0 18px 48px rgba(0,0,0,0.6)',
+              fontSize: settingsFontSize,
+              color: theme.textSecondary,
             }}
           >
               {/* settings tabs unchanged */}
@@ -302,14 +348,16 @@ const HeaderBar = ({
                     onClick={() => setSettingsTab(key)}
                     style={{
                       padding: '6px 8px', borderRadius: 6,
-                      border: settingsTab === key ? '1px solid #1e5b86' : '1px solid #444',
-                      background: settingsTab === key ? '#0e639c' : '#2b2b2b',
-                      color: '#eee', cursor: 'pointer', fontSize: settingsFontSize
+                      border: settingsTab === key ? `1px solid ${theme.accent}` : `1px solid ${theme.border}`,
+                      background: settingsTab === key ? theme.accentSoft : theme.buttonBg,
+                      color: settingsTab === key ? theme.textPrimary : theme.textSecondary,
+                      cursor: 'pointer', fontSize: settingsFontSize,
+                      transition: 'background 150ms ease, color 150ms ease, border 150ms ease',
                     }}
                   >{label}</button>
                 ))}
               </div>
-              <div style={{ borderTop: '1px solid #333' }} />
+              <div style={{ borderTop: `1px solid ${theme.border}` }} />
 
               {/* sub-menus unchanged */}
               {settingsTab === 'permissions' && (
@@ -327,7 +375,7 @@ const HeaderBar = ({
                     ['pagination', 'Pagination'],
                     ['export', 'Export Actions'],
                   ].map(([key, label]) => (
-                    <label key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                    <label key={key} style={{ ...formLabelStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       <span>{label}</span>
                       <input type="checkbox" checked={perm[key] !== false} onChange={() => togglePerm(key)} />
                     </label>
@@ -337,26 +385,26 @@ const HeaderBar = ({
 
               {settingsTab === 'narration' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ color: '#ddd', fontWeight: 600 }}>Result Narration</div>
-                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={headingTextStyle}>Result Narration</div>
+                  <label style={{ ...formLabelStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                     <span>Pass SQL results to LLM for narration</span>
                     <input type="checkbox" checked={!!sendSqlToLlm} onChange={(e) => setSendSqlToLlm?.(e.target.checked)} />
                   </label>
-                  <div style={{ color: '#999', fontSize: '0.75rem' }}>Narration appears below streamed tables when enabled.</div>
+                  <div style={subtleTextStyle}>Narration appears below streamed tables when enabled.</div>
                 </div>
               )}
 
               {settingsTab === 'training' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ color: '#ddd', fontWeight: 600 }}>Training Manager</div>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={headingTextStyle}>Training Manager</div>
+                  <label style={{ ...formLabelStyle, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <span>Hyperlink (opens in new tab):</span>
                     <input
                       type="text"
                       value={trainingUrl}
                       onChange={(e) => setTrainingUrl(e.target.value)}
                       placeholder="https://host:8501"
-                      style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#252526', color: '#d4d4d4' }}
+                      style={{ ...inputBaseStyle }}
                     />
                   </label>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -377,24 +425,28 @@ const HeaderBar = ({
 
               {settingsTab === 'performance' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ color: '#ddd', fontWeight: 600 }}>Performance</div>
+                  <div style={headingTextStyle}>Performance</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
-                    <label style={{ color: '#ccc', fontSize: settingsFontSize, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ ...formLabelStyle, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={!!serverMode} onChange={(e) => setServerMode?.(e.target.checked)} />
                       Server Mode (paginate/filter on server)
                     </label>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: '#ccc', fontSize: settingsFontSize }}>Table ops backend</span>
-                    <select value={tableOpsMode || 'flask'} onChange={(e) => setTableOpsMode?.(e.target.value)} style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6 }}>
+                    <span style={formLabelStyle}>Table ops backend</span>
+                    <select
+                      value={tableOpsMode || 'flask'}
+                      onChange={(e) => setTableOpsMode?.(e.target.value)}
+                      style={selectBaseStyle}
+                    >
                       <option value="flask">Flask (smart_cache.py)</option>
                       <option value="node">Node</option>
                     </select>
-                    <label style={{ color: '#ccc', fontSize: settingsFontSize, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ ...formLabelStyle, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={!!pushDownDb} onChange={(e) => setPushDownDb?.(e.target.checked)} /> Push to database
                     </label>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, ...formLabelStyle }}>
                     <span>maxClientRows (1–{virtualizeOnMaximize ? (virtMaxClientRows ?? 50000) : 5000})</span>
                     <input
                       type="number"
@@ -406,19 +458,19 @@ const HeaderBar = ({
                         const cap = virtualizeOnMaximize ? (virtMaxClientRows ?? 50000) : 5000;
                         setPerfMaxClientRows?.(Math.max(1, Math.min(cap, Number(e.target.value) || 1)));
                       }}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
                     />
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <input type="checkbox" checked={(perfMaxClientRows ?? 0) < 0} onChange={(e) => setPerfMaxClientRows?.(e.target.checked ? -1 : 5000)} /> Full
                     </label>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
-                    <label style={{ color: '#ccc', fontSize: settingsFontSize, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ ...formLabelStyle, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={!!virtualizeOnMaximize} onChange={(e) => setVirtualizeOnMaximize?.(e.target.checked)} />
                       Virtualize on Maximize (react-window)
                     </label>
                   </div>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>virtMaxClientRows (5000–200000)</span>
                     <input
                       type="number"
@@ -426,10 +478,10 @@ const HeaderBar = ({
                       max={200000}
                       value={virtMaxClientRows ?? 50000}
                       onChange={(e) => setVirtMaxClientRows?.(Math.max(5000, Math.min(200000, Number(e.target.value) || 50000)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 120 }}
+                      style={{ ...selectBaseStyle, width: 120, color: theme.textPrimary }}
                     />
                   </label>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>virtRowHeight (18–80 px)</span>
                     <input
                       type="number"
@@ -437,10 +489,10 @@ const HeaderBar = ({
                       max={80}
                       value={virtRowHeight ?? 28}
                       onChange={(e) => setVirtRowHeight?.(Math.max(18, Math.min(80, Number(e.target.value) || 28)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
                     />
                   </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, ...formLabelStyle }}>
                     <span>maxScan (1–5000)</span>
                     <input
                       type="number"
@@ -449,13 +501,13 @@ const HeaderBar = ({
                       value={(perfMaxScan ?? 5000) < 0 ? 5000 : (perfMaxScan ?? 5000)}
                       disabled={(perfMaxScan ?? 0) < 0}
                       onChange={(e) => setPerfMaxScan?.(Math.max(1, Math.min(5000, Number(e.target.value) || 1)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
                     />
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <input type="checkbox" checked={(perfMaxScan ?? 0) < 0} onChange={(e) => setPerfMaxScan?.(e.target.checked ? -1 : 5000)} /> Full
                     </label>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', gap: 8, ...formLabelStyle }}>
                     <span>maxDistinct (1–50)</span>
                     <input
                       type="number"
@@ -464,13 +516,13 @@ const HeaderBar = ({
                       value={(perfMaxDistinct ?? 50) < 0 ? 50 : (perfMaxDistinct ?? 50)}
                       disabled={(perfMaxDistinct ?? 0) < 0}
                       onChange={(e) => setPerfMaxDistinct?.(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
                     />
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <input type="checkbox" checked={(perfMaxDistinct ?? 0) < 0} onChange={(e) => setPerfMaxDistinct?.(e.target.checked ? -1 : 50)} /> Full
                     </label>
                   </div>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>maxVisibleMessages (1–10)</span>
                     <input
                       type="number"
@@ -478,10 +530,10 @@ const HeaderBar = ({
                       max={10}
                       value={maxVisibleMessages ?? 5}
                       onChange={(e) => setMaxVisibleMessages?.(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
+                  />
+                </label>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>maxClobPreview (0–100000)</span>
                     <input
                       type="number"
@@ -489,10 +541,10 @@ const HeaderBar = ({
                       max={100000}
                       value={clobPreview ?? 8192}
                       onChange={(e) => setClobPreview?.(Math.max(0, Math.min(100000, Number(e.target.value) || 0)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 120 }}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                      style={{ ...selectBaseStyle, width: 120, color: theme.textPrimary }}
+                  />
+                </label>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>maxBlobPreview (0–65536)</span>
                     <input
                       type="number"
@@ -500,10 +552,10 @@ const HeaderBar = ({
                       max={65536}
                       value={blobPreview ?? 2048}
                       onChange={(e) => setBlobPreview?.(Math.max(0, Math.min(65536, Number(e.target.value) || 0)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 120 }}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                      style={{ ...selectBaseStyle, width: 120, color: theme.textPrimary }}
+                  />
+                </label>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>updateIntervalMs (50–5000)</span>
                     <input
                       type="number"
@@ -511,10 +563,10 @@ const HeaderBar = ({
                       max={5000}
                       value={updateIntervalMs ?? 200}
                       onChange={(e) => setUpdateIntervalMs?.(Math.max(50, Math.min(5000, Number(e.target.value) || 200)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
+                  />
+                </label>
+                  <label style={{ ...formLabelStyle, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
                     <span>minRowsPerUpdate (10–500)</span>
                     <input
                       type="number"
@@ -522,10 +574,10 @@ const HeaderBar = ({
                       max={500}
                       value={minRowsPerUpdate ?? 100}
                       onChange={(e) => setMinRowsPerUpdate?.(Math.max(10, Math.min(500, Number(e.target.value) || 100)))}
-                      style={{ padding: '4px 6px', background: '#1e1e1e', color: '#ddd', border: '1px solid #444', borderRadius: 6, width: 100 }}
-                    />
-                  </label>
-                  <div style={{ color: '#999', fontSize: '0.75rem' }}>These caps keep the UI responsive for very large datasets.</div>
+                      style={{ ...selectBaseStyle, width: 100, color: theme.textPrimary }}
+                  />
+                </label>
+                  <div style={subtleTextStyle}>These caps keep the UI responsive for very large datasets.</div>
                   {/* unchanged performance controls */}
                   {/* ... */}
                 </div>
@@ -533,12 +585,12 @@ const HeaderBar = ({
 
               {settingsTab === 'logging' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ color: '#ddd', fontWeight: 600 }}>Logging</div>
-                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: '#ccc', fontSize: settingsFontSize }}>
+                  <div style={headingTextStyle}>Logging</div>
+                  <label style={{ ...formLabelStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                     <span>Enable server-side query logging</span>
                     <input type="checkbox" checked={!!logEnabled} onChange={(e) => setLogEnabled?.(e.target.checked)} />
                   </label>
-                  <div style={{ color: '#999', fontSize: '0.75rem' }}>
+                  <div style={subtleTextStyle}>
                     When enabled, the database agent logs intent, SQL, and request metadata to query_log.txt.
                   </div>
                 </div>

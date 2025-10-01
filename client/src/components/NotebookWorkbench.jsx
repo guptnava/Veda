@@ -1972,7 +1972,7 @@ export default function NotebookWorkbench({
 
         <section style={{ ...cardStyle, border: '1px solid #2c3b58', marginBottom: 12 }}>
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>DataFrames & Logs</h2>
+            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>NotebookSLM</h2>
             <span style={{ fontSize: '0.75rem', color: '#8da8cc' }}>Use names in downstream scripts</span>
           </header>
 

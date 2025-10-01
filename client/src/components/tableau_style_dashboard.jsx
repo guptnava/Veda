@@ -3,6 +3,7 @@ import { Responsive, WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import TableComponent from './TableComponent';
+import dashboardTheme from '../theme/dashboardTheme';
 import chartIcon from '../icons/chart.svg';
 import openIcon from '../icons/load.svg';
 import closeIcon from '../icons/close.svg';
@@ -47,6 +48,26 @@ import shadingIcon from '../icons/shading.svg';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 const GRID_COLUMNS = 12;
+const theme = dashboardTheme;
+const palette = {
+  background: theme.background,
+  surface: theme.surface,
+  panel: theme.panel,
+  panelMuted: theme.panelMuted,
+  card: theme.card,
+  border: theme.border,
+  borderMuted: theme.borderMuted,
+  textPrimary: theme.textPrimary,
+  textSecondary: theme.textSecondary,
+  textMuted: theme.textMuted,
+  textSubtle: theme.textSubtle,
+  accent: theme.accent,
+  accentSoft: theme.accentSoft,
+  accentSoftHover: theme.accentSoftHover,
+  overlay: theme.overlay,
+  buttonBg: theme.buttonBg,
+  buttonHover: theme.buttonBgHover,
+};
 const CHART_DEFINITIONS = [
   { type: 'line', label: 'Line Chart', icon: lineChartIcon },
   { type: 'bar', label: 'Bar Chart', icon: barChartIcon },
@@ -133,10 +154,10 @@ export default function TableauStyleDashboard() {
     borderStyle: 'outline',
     fontFamily: 'Inter',
     fontSize: '14',
-    fontColor: '#ffffff',
+    fontColor: palette.textPrimary,
     borderSize: '1',
-    borderColor: '#444444',
-    fillColor: '#1f1f1f',
+    borderColor: palette.border,
+    fillColor: palette.panel,
     shading: '#00000000',
     textAlign: 'left',
     numberFormat: 'general',
@@ -295,14 +316,14 @@ export default function TableauStyleDashboard() {
             alignItems: 'center',
             gap: 6,
             padding: 6,
-            border: '1px solid #2a2a2a',
+            border: `1px solid ${palette.border}`,
             borderRadius: 6,
             background: 'rgba(36,36,36,0.6)',
             cursor: 'grab',
           }}
         >
           <img src={item.icon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9 }} />
-          <span style={{ color: '#fff', lineHeight: 1.2, fontSize: '12px' }}>{label}</span>
+          <span style={{ color: palette.textPrimary, lineHeight: 1.2, fontSize: '12px' }}>{label}</span>
         </div>
       );
     };
@@ -316,10 +337,10 @@ export default function TableauStyleDashboard() {
           style={{
             width: '100%',
             background: 'rgba(32,32,32,0.6)',
-            border: '1px solid #2a2a2a',
+            border: `1px solid ${palette.border}`,
             borderRadius: 6,
             padding: '6px 10px',
-            color: '#fff',
+            color: palette.textPrimary,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -690,36 +711,36 @@ export default function TableauStyleDashboard() {
   };
 
   const renderChartPlaceholder = (chartType) => (
-    <div style={{ color: '#9cdcfe', fontSize: '0.9rem', lineHeight: 1.4 }}>
+    <div style={{ color: palette.textSubtle, fontSize: '0.9rem', lineHeight: 1.4 }}>
       {chartTypeLabelMap[chartType] || 'Custom Chart'} widget placeholder.
-      <div style={{ color: '#bbb', fontSize: '0.8rem', marginTop: 6 }}>
+      <div style={{ color: palette.textMuted, fontSize: '0.8rem', marginTop: 6 }}>
         Connect this widget to a dataset to render a live visualization.
       </div>
     </div>
   );
 
   const renderNavPlaceholder = (navType) => (
-    <div style={{ color: '#c8e6ff', fontSize: '0.9rem', lineHeight: 1.4 }}>
+    <div style={{ color: palette.textSubtle, fontSize: '0.9rem', lineHeight: 1.4 }}>
       {navWidgetLabelMap[navType] || 'Navigation Widget'} placeholder.
-      <div style={{ color: '#bbb', fontSize: '0.8rem', marginTop: 6 }}>
+      <div style={{ color: palette.textMuted, fontSize: '0.8rem', marginTop: 6 }}>
         Configure content panes and interactions to activate this navigation layout.
       </div>
     </div>
   );
 
   const renderControlPlaceholder = (controlType) => (
-    <div style={{ color: '#b3ffde', fontSize: '0.9rem', lineHeight: 1.4 }}>
+    <div style={{ color: palette.textSubtle, fontSize: '0.9rem', lineHeight: 1.4 }}>
       {controlWidgetLabelMap[controlType] || 'Interactive Control'} placeholder.
-      <div style={{ color: '#bbb', fontSize: '0.8rem', marginTop: 6 }}>
+      <div style={{ color: palette.textMuted, fontSize: '0.8rem', marginTop: 6 }}>
         Bind this control to filters or parameters to drive the dashboard experience.
       </div>
     </div>
   );
 
   const renderDisplayPlaceholder = (displayType) => (
-    <div style={{ color: '#ffe8c0', fontSize: '0.9rem', lineHeight: 1.4 }}>
+    <div style={{ color: palette.textSubtle, fontSize: '0.9rem', lineHeight: 1.4 }}>
       {displayWidgetLabelMap[displayType] || 'Data Display'} placeholder.
-      <div style={{ color: '#bbb', fontSize: '0.8rem', marginTop: 6 }}>
+      <div style={{ color: palette.textMuted, fontSize: '0.8rem', marginTop: 6 }}>
         Connect metrics or timelines to this widget to surface key insights.
       </div>
     </div>
@@ -729,8 +750,8 @@ export default function TableauStyleDashboard() {
     width: 28,
     height: 28,
     borderRadius: 6,
-    border: '1px solid #333',
-    background: '#1f1f1f',
+    border: `1px solid ${palette.border}`,
+    background: palette.panel,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -741,8 +762,9 @@ export default function TableauStyleDashboard() {
 
   const getButtonStyle = (active) => ({
     ...formatButtonBaseStyle,
-    border: active ? '1px solid #2aa3d4' : '1px solid #333',
-    background: active ? 'rgba(14,99,156,0.28)' : '#1f1f1f',
+    border: `1px solid ${active ? palette.accent : palette.border}`,
+    background: active ? palette.accentSoft : palette.panel,
+    color: active ? palette.textPrimary : palette.textSecondary,
   });
 
   const numberFormatOptions = useMemo(() => ([
@@ -927,9 +949,9 @@ export default function TableauStyleDashboard() {
     }
   };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0b0b0b' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: palette.background, color: palette.textPrimary }}>
       <HeaderBar
-        title="Dashboard Builder"
+        title="Dashboard Studio"
         isPanelOpen={hbPanelOpen}
         onTogglePanel={() => setHbPanelOpen(v => !v)}
         model={hbModel}
@@ -957,7 +979,7 @@ export default function TableauStyleDashboard() {
         .object-item:hover { background: rgba(255,255,255,0.06); }
       `}</style>
 
-      <div style={{ width: '100%', padding: '0 18px 6px', boxSizing: 'border-box', background: '#111' }}>
+      <div style={{ width: '100%', padding: '0 18px 6px', boxSizing: 'border-box', background: palette.panel }}>
         <div
           style={{
             display: 'flex',
@@ -967,9 +989,9 @@ export default function TableauStyleDashboard() {
             width: '100%',
             overflow: 'visible',
             padding: '4px 8px',
-            border: '1px solid #2a2a2a',
+            border: `1px solid ${palette.border}`,
             borderRadius: 10,
-            background: 'linear-gradient(180deg, rgba(37,37,37,0.95) 0%, rgba(20,20,20,0.95) 100%)',
+            background: palette.panelMuted,
             boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
             position: 'relative',
             zIndex: 120,
@@ -985,8 +1007,8 @@ export default function TableauStyleDashboard() {
                 width: 28,
                 height: 28,
                 borderRadius: '50%',
-                border: showSavePanel ? '1px solid #2aa3d4' : '1px solid #1e5b86',
-                background: showSavePanel ? '#0e639c' : '#1f1f1f',
+                border: showSavePanel ? `1px solid ${palette.accent}` : `1px solid ${palette.border}`,
+                background: showSavePanel ? palette.accent : palette.panel,
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1011,20 +1033,20 @@ export default function TableauStyleDashboard() {
                   gap: 10,
                   padding: 14,
                   borderRadius: 10,
-                  border: '1px solid #333',
-                  background: '#1f1f1f',
+                  border: `1px solid ${palette.border}`,
+                  background: palette.panel,
                   boxShadow: '0 12px 28px rgba(0,0,0,0.45)',
                   width: 'min(280px, calc(100vw - 24px))',
                   zIndex: 240,
                 }}
               >
-                <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.95rem' }}>Save Dashboard</div>
+                <div style={{ fontWeight: 600, color: palette.textPrimary, fontSize: '0.95rem' }}>Save Dashboard</div>
                 {!hasWidgets && (
-                  <div style={{ color: '#fda29b', fontSize: '0.85rem' }}>Add at least one widget before saving.</div>
+                  <div style={{ color: palette.accent, fontSize: '0.85rem' }}>Add at least one widget before saving.</div>
                 )}
                 {dashboardName && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '4px 0' }}>
-                    <div style={{ color: '#ddd', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ color: palette.textSecondary, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       Current dashboard: <strong>{dashboardName}</strong>
                     </div>
                     <button
@@ -1034,9 +1056,9 @@ export default function TableauStyleDashboard() {
                       style={{
                         padding: '6px 12px',
                         borderRadius: 6,
-                        border: '1px solid #1e5b86',
-                        background: hasWidgets ? '#0e639c' : '#2d2d2d',
-                        color: '#fff',
+                        border: `1px solid ${palette.accent}`,
+                        background: hasWidgets ? palette.accent : palette.buttonBg,
+                        color: palette.textPrimary,
                         cursor: hasWidgets ? 'pointer' : 'not-allowed',
                       }}
                     >
@@ -1044,19 +1066,19 @@ export default function TableauStyleDashboard() {
                     </button>
                   </div>
                 )}
-                <div style={{ borderTop: '1px solid #333', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <label style={{ color: '#ccc', fontSize: '0.85rem' }}>Save As</label>
+                <div style={{ borderTop: `1px solid ${palette.border}`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ color: palette.textSecondary, fontSize: '0.85rem' }}>Save As</label>
                   <input
                     placeholder="Dashboard name"
                     value={saveDraftName}
                     onChange={(e) => setSaveDraftName(e.target.value)}
-                    style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#1e1e1e', color: '#ddd' }}
+                    style={{ padding: '6px 8px', borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.panel, color: palette.textPrimary }}
                   />
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                     <button
                       type="button"
                       onClick={() => setShowSavePanel(false)}
-                      style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}
+                      style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.buttonBg, color: palette.textSecondary, cursor: 'pointer' }}
                     >
                       Cancel
                     </button>
@@ -1067,9 +1089,9 @@ export default function TableauStyleDashboard() {
                       style={{
                         padding: '6px 12px',
                         borderRadius: 6,
-                        border: '1px solid #1e5b86',
-                        background: canSaveAs ? '#0e639c' : '#2d2d2d',
-                        color: '#fff',
+                        border: `1px solid ${palette.accent}`,
+                        background: canSaveAs ? palette.accent : palette.buttonBg,
+                        color: palette.textPrimary,
                         cursor: canSaveAs ? 'pointer' : 'not-allowed',
                       }}
                     >
@@ -1141,8 +1163,8 @@ export default function TableauStyleDashboard() {
                   top: 'calc(100% + 8px)',
                   left: 0,
                   zIndex: 240,
-                  background: '#1f1f1f',
-                  border: '1px solid #333',
+                  background: palette.panel,
+                  border: `1px solid ${palette.border}`,
                   borderRadius: 10,
                   padding: 10,
                   minWidth: 180,
@@ -1152,7 +1174,7 @@ export default function TableauStyleDashboard() {
                   gap: 6,
                 }}
               >
-                <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.85rem' }}>Number Format</div>
+                <div style={{ color: palette.textPrimary, fontWeight: 600, fontSize: '0.85rem' }}>Number Format</div>
                 {numberFormatOptions.map(([value, label]) => {
                   const active = formatOptions.numberFormat === value;
                   return (
@@ -1165,9 +1187,9 @@ export default function TableauStyleDashboard() {
                       }}
                       style={{
                         textAlign: 'left',
-                        background: active ? '#0e639c' : 'transparent',
+                        background: active ? palette.accentSoft : 'transparent',
                         border: 'none',
-                        color: active ? '#fff' : '#ddd',
+                        color: active ? palette.textPrimary : palette.textSecondary,
                         padding: '6px 8px',
                         borderRadius: 6,
                         cursor: 'pointer',
@@ -1209,8 +1231,8 @@ export default function TableauStyleDashboard() {
                   top: 'calc(100% + 8px)',
                   left: 0,
                   zIndex: 240,
-                  background: '#1f1f1f',
-                  border: '1px solid #333',
+                  background: palette.panel,
+                  border: `1px solid ${palette.border}`,
                   borderRadius: 10,
                   padding: 10,
                   minWidth: 180,
@@ -1220,7 +1242,7 @@ export default function TableauStyleDashboard() {
                   gap: 6,
                 }}
               >
-                <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.85rem' }}>Date Format</div>
+                <div style={{ color: palette.textPrimary, fontWeight: 600, fontSize: '0.85rem' }}>Date Format</div>
                 {dateFormatOptions.map(([value, label]) => {
                   const active = formatOptions.dateFormat === value;
                   return (
@@ -1233,9 +1255,9 @@ export default function TableauStyleDashboard() {
                       }}
                       style={{
                         textAlign: 'left',
-                        background: active ? '#0e639c' : 'transparent',
+                        background: active ? palette.accentSoft : 'transparent',
                         border: 'none',
-                        color: active ? '#fff' : '#ddd',
+                        color: active ? palette.textPrimary : palette.textSecondary,
                         padding: '6px 8px',
                         borderRadius: 6,
                         cursor: 'pointer',
@@ -1257,7 +1279,7 @@ export default function TableauStyleDashboard() {
               value={formatOptions.fontFamily}
               onChange={(e) => updateFormatOption('fontFamily', e.target.value)}
               title="Font"
-              style={{ background: '#1f1f1f', color: '#ddd', border: '1px solid #333', borderRadius: 6, padding: '6px 8px', fontSize: '0.85rem' }}
+              style={{ background: palette.panel, color: palette.textSecondary, border: `1px solid ${palette.border}`, borderRadius: 6, padding: '6px 8px', fontSize: '0.85rem' }}
             >
               {['Inter', 'Arial', 'Georgia', 'Courier New', 'Times New Roman'].map(f => (
                 <option key={f} value={f}>{f}</option>
@@ -1267,7 +1289,7 @@ export default function TableauStyleDashboard() {
               value={formatOptions.fontSize}
               onChange={(e) => updateFormatOption('fontSize', e.target.value)}
               title="Font size"
-              style={{ background: '#1f1f1f', color: '#ddd', border: '1px solid #333', borderRadius: 6, padding: '6px 8px', fontSize: '0.85rem' }}
+              style={{ background: palette.panel, color: palette.textSecondary, border: `1px solid ${palette.border}`, borderRadius: 6, padding: '6px 8px', fontSize: '0.85rem' }}
             >
               {['12', '14', '16', '18', '20', '24', '32'].map(sz => (
                 <option key={sz} value={sz}>{sz}px</option>
@@ -1335,8 +1357,8 @@ export default function TableauStyleDashboard() {
                 top: 'calc(100% + 8px)',
                 left: 0,
                 zIndex: 240,
-                background: '#1f1f1f',
-                border: '1px solid #333',
+                background: palette.panel,
+                border: `1px solid ${palette.border}`,
                 borderRadius: 10,
                 padding: 12,
                 minWidth: 220,
@@ -1346,7 +1368,7 @@ export default function TableauStyleDashboard() {
                 gap: 10,
               }}
             >
-              <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.9rem' }}>Borders</div>
+              <div style={{ color: palette.textPrimary, fontWeight: 600, fontSize: '0.9rem' }}>Borders</div>
               <div style={{ display: 'grid', rowGap: 6 }}>
                 {[
                   ['none', 'None'],
@@ -1354,7 +1376,7 @@ export default function TableauStyleDashboard() {
                   ['inside', 'Inside borders'],
                   ['full', 'All borders'],
                 ].map(([value, label]) => (
-                  <label key={value} style={{ color: '#ddd', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label key={value} style={{ color: palette.textSecondary, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <input
                       type="radio"
                       name="border-style"
@@ -1369,24 +1391,24 @@ export default function TableauStyleDashboard() {
                 ))}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ color: '#bbb', fontSize: '0.85rem' }}>Width</label>
+                <label style={{ color: palette.textMuted, fontSize: '0.85rem' }}>Width</label>
                 <input
                   type="number"
                   min="0"
                   max="10"
                   value={formatOptions.borderSize}
                   onChange={(e) => updateFormatOption('borderSize', e.target.value)}
-                  style={{ width: 70, background: '#1f1f1f', color: '#ddd', border: '1px solid #333', borderRadius: 6, padding: '4px 8px' }}
+                  style={{ width: 70, background: palette.panel, color: palette.textSecondary, border: `1px solid ${palette.border}`, borderRadius: 6, padding: '4px 8px' }}
                 />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 20, height: 20, borderRadius: 4, border: '1px solid #555', background: formatOptions.borderColor }} />
+                <div style={{ width: 20, height: 20, borderRadius: 4, border: `1px solid ${palette.borderMuted}`, background: formatOptions.borderColor }} />
                 <input
                   type="color"
                   value={formatOptions.borderColor}
                   onChange={(e) => updateFormatOption('borderColor', e.target.value)}
                   title="Border color"
-                  style={{ width: 40, height: 40, border: '1px solid #333', borderRadius: 6, background: '#1f1f1f', padding: 0 }}
+                  style={{ width: 40, height: 40, border: `1px solid ${palette.border}`, borderRadius: 6, background: palette.panel, padding: 0 }}
                 />
               </div>
             </div>
@@ -1432,7 +1454,7 @@ export default function TableauStyleDashboard() {
           </div>
       </div>
       </div>
-      {message && <div style={{ color: '#9cdcfe', marginBottom: 10 }}>{message}</div>}
+      {message && <div style={{ color: palette.textSubtle, marginBottom: 10 }}>{message}</div>}
 
         <div
           style={{
@@ -1448,7 +1470,7 @@ export default function TableauStyleDashboard() {
         {/* Saved Views (scrollable) */}
         <div
           style={{
-            border: '1px solid #333', borderRadius: 8, padding: 10, background: '#1f1f1f',
+            border: `1px solid ${palette.border}`, borderRadius: 8, padding: 10, background: palette.panel,
             ...(sizeMode === 'automatic'
               ? { height: '100%' }
               : { maxHeight: 'calc(100vh - 160px)' }
@@ -1457,14 +1479,19 @@ export default function TableauStyleDashboard() {
           }}
         >
           {/* 1) Size */}
-          <div style={{ border: '1px solid #444', borderRadius: 8, padding: 8, background: '#1f1f1f' }}>
+          <div style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: 8, background: palette.panel }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 8 }}>
-              <label htmlFor="dash-size-mode" style={{ color: '#ddd', fontWeight: 600 }}>Size</label>
+              <label
+                htmlFor="dash-size-mode"
+                style={{ color: palette.textSecondary, fontWeight: 600, fontSize: '0.78rem', letterSpacing: '0.02em' }}
+              >
+                Size
+              </label>
               <select
                 id="dash-size-mode"
                 value={sizeMode}
                 onChange={(e) => setSizeMode(e.target.value === 'fixed' ? 'fixed' : 'automatic')}
-                style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #444', background: '#252526', color: '#ddd' }}
+                style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.panel, color: palette.textSecondary, fontSize: '0.8rem' }}
               >
                 <option value="automatic">Automatic</option>
                 <option value="fixed">Fixed Size</option>
@@ -1473,7 +1500,7 @@ export default function TableauStyleDashboard() {
             {sizeMode === 'fixed' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <label htmlFor="dash-fixed-width" style={{ color: '#aaa' }}>Width</label>
+                  <label htmlFor="dash-fixed-width" style={{ color: palette.textMuted }}>Width</label>
                   <input
                     id="dash-fixed-width"
                     type="number"
@@ -1481,11 +1508,11 @@ export default function TableauStyleDashboard() {
                     max={10000}
                     value={fixedWidth}
                     onChange={(e) => setFixedWidth(Math.max(320, Math.min(10000, Number(e.target.value) || 1200)))}
-                    style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #444', background: '#252526', color: '#ddd' }}
+                    style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.panel, color: palette.textSecondary }}
                   />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 6 }}>
-                  <label htmlFor="dash-fixed-height" style={{ color: '#aaa' }}>Height</label>
+                  <label htmlFor="dash-fixed-height" style={{ color: palette.textMuted }}>Height</label>
                   <input
                     id="dash-fixed-height"
                     type="number"
@@ -1493,18 +1520,18 @@ export default function TableauStyleDashboard() {
                     max={10000}
                     value={fixedHeight}
                     onChange={(e) => setFixedHeight(Math.max(240, Math.min(10000, Number(e.target.value) || 800)))}
-                    style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #444', background: '#252526', color: '#ddd' }}
+                    style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${palette.border}`, background: palette.panel, color: palette.textSecondary }}
                   />
                 </div>
               </div>
             )}
           </div>
           {/* 2) Sheets (Saved Views) */}
-          <div style={{ border: '1px solid #444', borderRadius: 8, padding: 8, background: '#1f1f1f', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>Sheets</div>
+          <div style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: 8, background: palette.panel, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ color: palette.textPrimary, fontWeight: 600, marginBottom: 6, fontSize: '0.8rem', letterSpacing: '0.02em' }}>Sheets</div>
             <div style={{ flex: 1, overflow: 'auto' }}>
             {loading ? (
-              <div style={{ color: '#aaa' }}>Loading…</div>
+              <div style={{ color: palette.textMuted }}>Loading…</div>
             ) : (
               (savedViews && savedViews.length) ? savedViews.map(v => (
                 <div
@@ -1513,11 +1540,11 @@ export default function TableauStyleDashboard() {
                   onDragStart={(e) => onDragStartView(e, v)}
                   title={`Drag ${v.viewName} to layout`}
                   className="sheet-item"
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 4px', marginBottom: 4, color: '#e6e6e6' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 4px', marginBottom: 4, color: palette.textSecondary }}
                 >
                   <img src={chartIcon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9, flex: '0 0 auto' }} />
                   <div style={{
-                    color: '#e6e6e6',
+                    color: palette.textSecondary,
                     fontWeight: 600,
                     letterSpacing: 0.2,
                     fontSize: '12px',
@@ -1529,14 +1556,14 @@ export default function TableauStyleDashboard() {
                     {v.viewName}
                   </div>
                 </div>
-              )) : <div style={{ color: '#aaa' }}>No saved views.</div>
+              )) : <div style={{ color: palette.textMuted }}>No saved views.</div>
           )}
             </div>
           </div>
 
           {/* 3) Objects */}
-          <div style={{ border: '1px solid #444', borderRadius: 8, padding: 8, background: '#1f1f1f' }}>
-            <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>Objects</div>
+          <div style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: 8, background: palette.panel }}>
+            <div style={{ color: palette.textPrimary, fontWeight: 600, marginBottom: 6, fontSize: '0.8rem', letterSpacing: '0.02em' }}>Objects</div>
             <div
               style={{
                 display: 'grid',
@@ -1557,14 +1584,14 @@ export default function TableauStyleDashboard() {
                     alignItems: 'center',
                     gap: 6,
                     padding: 6,
-                    border: '1px solid #2a2a2a',
+                    border: `1px solid ${palette.border}`,
                     borderRadius: 6,
                     background: 'rgba(36,36,36,0.6)',
                     cursor: 'grab',
                   }}
                 >
                   <img src={item.icon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9 }} />
-                  <span style={{ color: '#fff', lineHeight: 1.2, fontSize: '12px' }}>{item.label}</span>
+                  <span style={{ color: palette.textPrimary, lineHeight: 1.2, fontSize: '12px' }}>{item.label}</span>
                 </div>
               ))}
             </div>
@@ -1590,7 +1617,7 @@ export default function TableauStyleDashboard() {
                       justifyContent: 'center',
                       padding: 2,
                       marginRight: 4,
-                      border: '1px solid #2a2a2a',
+                      border: `1px solid ${palette.border}`,
                       borderRadius: 8,
                       background: 'rgba(36,36,36,0.65)',
                       cursor: 'grab',
@@ -1602,7 +1629,7 @@ export default function TableauStyleDashboard() {
                         height: 36,
                         borderRadius: '50%',
                         background: 'rgba(20,20,20,0.92)',
-                        border: '1px solid #2a2a2a',
+                        border: `1px solid ${palette.border}`,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -1630,7 +1657,7 @@ export default function TableauStyleDashboard() {
         <div
           ref={gridContainerRef}
           style={{
-            border: '1px solid #333', borderRadius: 8, padding: 10, background: '#1b1b1b', overflow: 'auto', width: '100%',
+            border: `1px solid ${palette.border}`, borderRadius: 8, padding: 10, background: palette.panelMuted, overflow: 'auto', width: '100%',
             ...(sizeMode === 'fixed'
               ? { width: fixedWidth, height: fixedHeight }
               : { height: '100%'}
@@ -1639,7 +1666,7 @@ export default function TableauStyleDashboard() {
           onDragOver={(e) => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch {} }}
           onDrop={onContainerDrop}
         >
-          <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>Layout</div>
+          <div style={{ color: palette.textPrimary, fontWeight: 600, marginBottom: 6 }}>Layout</div>
           <ResponsiveGridLayout
             key={`top:${gridWidthKey}`}
             className="layout top-grid"
@@ -1667,9 +1694,9 @@ export default function TableauStyleDashboard() {
               const meta = widgets[item.i];
               if (meta?.type === 'container') {
                 return (
-                  <div key={item.i} style={{ background: '#1f1f1f', border: '1px dashed #555', borderRadius: 6, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <div className="widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #333', cursor: 'grab' }}>
-                      <div style={{ color: '#fff', fontWeight: 600 }}>{meta.orientation === 'v' ? 'Vertical' : 'Horizontal'} Container</div>
+                  <div key={item.i} style={{ background: palette.panel, border: `1px dashed ${palette.borderMuted}`, borderRadius: 6, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <div className="widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${palette.border}`, cursor: 'grab' }}>
+                      <div style={{ color: palette.textPrimary, fontWeight: 600 }}>{meta.orientation === 'v' ? 'Vertical' : 'Horizontal'} Container</div>
                       <button type="button" onClick={() => removeWidget(item.i)} title="Close" aria-label="Close" style={{ background: 'transparent', border: 'none', padding: 4, cursor: 'pointer' }}>
                         <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 16, height: 16, opacity: 0.9 }} />
                       </button>
@@ -1769,9 +1796,9 @@ export default function TableauStyleDashboard() {
                                   ? (displayWidgetLabelMap[childMeta?.displayType] || 'Data Display')
                                 : childMeta?.viewName || 'View';
                             return (
-                              <div key={ci.i} style={{ background: '#222', border: '1px solid #444', borderRadius: 4, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                <div className="child-widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px', borderBottom: '1px solid #333', cursor: 'grab' }}>
-                                  <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{childTitle}</div>
+                              <div key={ci.i} style={{ background: palette.panel, border: `1px solid ${palette.border}`, borderRadius: 4, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                <div className="child-widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px', borderBottom: `1px solid ${palette.border}`, cursor: 'grab' }}>
+                                  <div style={{ color: palette.textPrimary, fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{childTitle}</div>
                                   <button
                                     type="button"
                                     onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -1794,7 +1821,7 @@ export default function TableauStyleDashboard() {
                                     <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 16, height: 16, opacity: 0.9 }} />
                                   </button>
                                 </div>
-                                <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, color: '#bbb', fontSize: '0.9rem' }}>
+                                <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, color: palette.textMuted, fontSize: '0.9rem' }}>
                                   {childMeta?.type === 'view' ? (
                                     childMeta?.viewContent?.exportContext ? (
                                       <TableComponent
@@ -1818,7 +1845,7 @@ export default function TableauStyleDashboard() {
                                     <textarea
                                       value={childMeta?.text || ''}
                                       onChange={(e) => updateTextWidget(ci.i, e.target.value, item.i)}
-                                      style={{ width: '100%', minHeight: 80, background: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 4, padding: '6px', resize: 'vertical' }}
+                                      style={{ width: '100%', minHeight: 80, background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px', resize: 'vertical' }}
                                     />
                                   ) : childMeta?.type === 'display' ? (
                                     renderDisplayPlaceholder(childMeta?.displayType)
@@ -1834,29 +1861,29 @@ export default function TableauStyleDashboard() {
                                         value={childMeta?.sourceType === 'file' ? '' : (childMeta?.imageUrl || '')}
                                         onChange={(e) => updateImageWidget(ci.i, e.target.value, item.i, { sourceType: 'url', fileName: '' })}
                                         placeholder="Image URL"
-                                        style={{ width: '100%', background: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 4, padding: '6px' }}
+                                        style={{ width: '100%', background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px' }}
                                       />
                                       <input
                                         type="file"
                                         accept="image/*"
                                         onChange={handleImageFileSelect(ci.i, item.i)}
-                                        style={{ color: '#ccc' }}
+                                        style={{ color: palette.textSecondary }}
                                       />
                                       {childMeta?.imageUrl ? (
                                         <img
                                           src={childMeta.imageUrl}
                                           alt="Widget"
-                                          style={{ maxWidth: '100%', borderRadius: 4, border: '1px solid #2a2a2a' }}
+                                          style={{ maxWidth: '100%', borderRadius: 4, border: `1px solid ${palette.border}` }}
                                         />
                                       ) : (
-                                        <div style={{ color: '#888', fontSize: '0.85rem' }}>Enter an image URL above.</div>
+                                        <div style={{ color: palette.textMuted, fontSize: '0.85rem' }}>Enter an image URL above.</div>
                                       )}
                                       {childMeta?.fileName && (
-                                        <div style={{ color: '#aaa', fontSize: '0.8rem' }}>File: {childMeta.fileName}</div>
+                                        <div style={{ color: palette.textMuted, fontSize: '0.8rem' }}>File: {childMeta.fileName}</div>
                                       )}
                                     </div>
                                   ) : (
-                                    <div style={{ color: '#888' }}>Unsupported widget.</div>
+                                    <div style={{ color: palette.textMuted }}>Unsupported widget.</div>
                                   )}
                                 </div>
                               </div>
@@ -1868,9 +1895,9 @@ export default function TableauStyleDashboard() {
                 );
               }
               return (
-                <div key={item.i} style={{ background: '#222', border: '1px solid #444', borderRadius: 6, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                  <div className="widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #333', cursor: 'grab' }}>
-                    <div style={{ color: '#fff', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div key={item.i} style={{ background: palette.panel, border: `1px solid ${palette.border}`, borderRadius: 6, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <div className="widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${palette.border}`, cursor: 'grab' }}>
+                    <div style={{ color: palette.textPrimary, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {meta?.type === 'text'
                         ? ((meta?.text || '').trim() ? (meta.text || '').trim().slice(0, 32) : 'Text')
                         : meta?.type === 'image'
@@ -1907,7 +1934,7 @@ export default function TableauStyleDashboard() {
                           dashboardMode={true}
                         />
                       ) : (
-                        <div style={{ color: '#bbb', fontSize: '0.9rem' }}>
+                        <div style={{ color: palette.textMuted, fontSize: '0.9rem' }}>
                           Saved view: <strong>{meta?.viewName}</strong> (no preview config). Resize freely; content scrolls.
                         </div>
                       )
@@ -1915,7 +1942,7 @@ export default function TableauStyleDashboard() {
                       <textarea
                         value={meta?.text || ''}
                         onChange={(e) => updateTextWidget(item.i, e.target.value)}
-                        style={{ width: '100%', minHeight: 120, background: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 4, padding: '6px', resize: 'vertical' }}
+                        style={{ width: '100%', minHeight: 120, background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px', resize: 'vertical' }}
                       />
                     ) : meta?.type === 'control' ? (
                       renderControlPlaceholder(meta?.controlType)
@@ -1931,29 +1958,29 @@ export default function TableauStyleDashboard() {
                           value={meta?.sourceType === 'file' ? '' : (meta?.imageUrl || '')}
                           onChange={(e) => updateImageWidget(item.i, e.target.value, null, { sourceType: 'url', fileName: '' })}
                           placeholder="Image URL"
-                          style={{ width: '100%', background: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 4, padding: '6px' }}
+                          style={{ width: '100%', background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px' }}
                         />
                         <input
                           type="file"
                           accept="image/*"
                           onChange={handleImageFileSelect(item.i)}
-                          style={{ color: '#ccc' }}
+                          style={{ color: palette.textSecondary }}
                         />
                         {meta?.imageUrl ? (
                           <img
                             src={meta.imageUrl}
                             alt="Widget"
-                            style={{ maxWidth: '100%', borderRadius: 4, border: '1px solid #2a2a2a' }}
+                            style={{ maxWidth: '100%', borderRadius: 4, border: `1px solid ${palette.border}` }}
                           />
                         ) : (
-                          <div style={{ color: '#888', fontSize: '0.9rem' }}>Enter an image URL above.</div>
+                          <div style={{ color: palette.textMuted, fontSize: '0.9rem' }}>Enter an image URL above.</div>
                         )}
                         {meta?.fileName && (
-                          <div style={{ color: '#aaa', fontSize: '0.85rem' }}>File: {meta.fileName}</div>
+                          <div style={{ color: palette.textMuted, fontSize: '0.85rem' }}>File: {meta.fileName}</div>
                         )}
                       </div>
                     ) : (
-                      <div style={{ color: '#bbb', fontSize: '0.9rem' }}>
+                      <div style={{ color: palette.textMuted, fontSize: '0.9rem' }}>
                         Unsupported widget type.
                       </div>
                     )}
@@ -1965,7 +1992,7 @@ export default function TableauStyleDashboard() {
         </div>
       </div>
 
-      <div style={{ marginTop: 12, color: '#aaa' }}>
+      <div style={{ marginTop: 12, color: palette.textMuted }}>
         Tips: drag a view from the left and drop it onto the grid. Use the right/bottom handles to resize. The grid and each widget are scrollable.
       </div>
     </div>

@@ -59,7 +59,7 @@ export default function DataScienceBench() {
               },
             },
             {
-              title: 'Dashboard Viewer',
+              title: 'Dashboard Browser',
               description:
                 'Launch the published dashboards your team maintains. Filter, interact, and inspect saved layouts with familiar controls.',
               buttonLabel: 'Open Viewer',
@@ -79,7 +79,7 @@ export default function DataScienceBench() {
               },
             },
             {
-              title: 'Dashboard Builder',
+              title: 'Dashboard Studio',
               description:
                 'Assemble interactive dashboards from saved worksheets with drag-and-drop precision, then publish to your viewers.',
               buttonLabel: 'Launch Builder',

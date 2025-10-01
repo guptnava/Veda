@@ -3,6 +3,7 @@ import IconClear from '../icons/delete.png';
 import IconDownload from '../icons/download.svg';
 import IconUpload from '../icons/upload.svg';
 import IconHistory from '../icons/history.svg';
+import dashboardTheme from '../theme/dashboardTheme';
 
 
 // Icon placeholders (replace with your own paths or pass via props)
@@ -10,6 +11,8 @@ const ICON_CLEAR = IconClear;
 const ICON_DOWNLOAD = IconDownload;
 const ICON_UPLOAD = IconUpload;
 const ICON_HISTORY = IconHistory;
+
+const theme = dashboardTheme;
 
 const VerticalSlider = ({ label, value, ...props }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', fontFamily: 'monospace', fontSize: '0.75rem' }}>
@@ -58,17 +61,17 @@ const LeftPanel = ({
     padding: '0 10px',
     fontSize: '0.85rem',
     borderRadius: 8,
-    background: '#1f1f1f',
-    color: '#e6e6e6',
-    border: '1px solid #3a3a3a',
+    background: theme.panelMuted,
+    color: theme.textSecondary,
+    border: `1px solid ${theme.border}`,
   };
 
   const sectionStyle = {
-    border: '2px solid #3f4a5a',
+    border: `1px solid ${theme.border}`,
     borderRadius: 12,
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 0 rgba(0,0,0,0.4)',
+    boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
     padding: '14px 12px',
-    background: '#1f1f1f',
+    background: theme.surface,
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
@@ -78,17 +81,35 @@ const LeftPanel = ({
     margin: 0,
     fontSize: '0.9rem',
     fontWeight: 600,
-    color: '#e3ecff',
+    color: theme.textSecondary,
     letterSpacing: '0.015em',
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', padding: isPanelOpen ? '16px' : '0', backgroundColor: '#252526', color: '#d4d4d4', transition: 'width 0.3s ease-in-out', width: isPanelOpen ? '288px' : '0', overflowX: 'hidden', overflowY: 'auto', scrollbarGutter: 'stable both-edges', WebkitOverflowScrolling: 'touch', flexShrink: 0, borderRight: isPanelOpen ? '1px solid #444' : 'none', height: '100%' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        padding: isPanelOpen ? '16px' : '0',
+        backgroundColor: theme.panel,
+        color: theme.textPrimary,
+        transition: 'width 0.3s ease-in-out',
+        width: isPanelOpen ? '288px' : '0',
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        scrollbarGutter: 'stable both-edges',
+        WebkitOverflowScrolling: 'touch',
+        flexShrink: 0,
+        borderRight: isPanelOpen ? `1px solid ${theme.border}` : 'none',
+        height: '100%',
+        boxShadow: isPanelOpen ? '6px 0 24px rgba(0,0,0,0.35)' : 'none',
+      }}
+    >
       <div style={{ display: 'flex', flexDirection: 'column', flex: '1', overflow: 'visible', minHeight: 0 }}>
         <div style={{ ...sectionStyle, marginBottom: 18 }}>
           <h3 style={sectionHeaderStyle}>Model &amp; Agent</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label htmlFor="leftpanel-model-select" style={{ fontSize: '0.85rem', color: '#d4d4d4' }}>Model</label>
+            <label htmlFor="leftpanel-model-select" style={{ fontSize: '0.85rem', color: theme.textMuted }}>Model</label>
             <select
               id="leftpanel-model-select"
               value={model}
@@ -108,7 +129,7 @@ const LeftPanel = ({
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label htmlFor="leftpanel-agent-select" style={{ fontSize: '0.85rem', color: '#d4d4d4' }}>Agent</label>
+            <label htmlFor="leftpanel-agent-select" style={{ fontSize: '0.85rem', color: theme.textMuted }}>Agent</label>
             <select
               id="leftpanel-agent-select"
               value={interactionMode}
@@ -134,30 +155,32 @@ const LeftPanel = ({
         <div style={{ ...sectionStyle, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
             <h3 style={sectionHeaderStyle}>Generation Controls</h3>
-            <button
-              onClick={resetSliders}
-              title="Reset sliders"
-              aria-label="Reset sliders to defaults"
-              style={{
-                padding: '4px 6px',
-                borderRadius: 6,
-                border: '1px solid #4a5669',
-                background: '#1d2026',
-                color: '#dbe6ff',
-                cursor: 'pointer',
-                fontSize: '0.8rem',
-                lineHeight: 1,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#263042';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = '#1d2026';
-              }}
-            >↺</button>
+              <button
+                onClick={resetSliders}
+                title="Reset sliders"
+                aria-label="Reset sliders to defaults"
+                style={{
+                  padding: '4px 6px',
+                  borderRadius: 6,
+                  border: `1px solid ${theme.border}`,
+                  background: theme.buttonBg,
+                  color: theme.textSecondary,
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  lineHeight: 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = theme.buttonBgHover;
+                  e.currentTarget.style.borderColor = theme.accent;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = theme.buttonBg;
+                  e.currentTarget.style.borderColor = theme.border;
+                }}
+              >↺</button>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-around', gap: '16px', paddingTop: 4, flexShrink: 0, flex: 1 }}>
             <VerticalSlider label="Temp" id="temperature" min="0" max="1" step="0.1" value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value))} />
@@ -212,16 +235,37 @@ const HistorySection = ({ history, onHistoryClick, historyIconUrl = ICON_HISTORY
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{
-          width: '100%', padding: '6px', borderRadius: 4,
-          border: '1px solid #444', background: '#1e1e1e', color: '#d4d4d4'
+          width: '100%',
+          padding: '6px 8px',
+          borderRadius: 6,
+          border: `1px solid ${theme.border}`,
+          background: theme.panelMuted,
+          color: theme.textPrimary,
         }}
       />
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: '#aaa' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: theme.textMuted }}>
         <span>{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
       </div>
-      <div tabIndex={0} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto', scrollbarGutter: 'stable both-edges', WebkitOverflowScrolling: 'touch', border: '1px solid #333', borderRadius: 6, padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div
+        tabIndex={0}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+          scrollbarGutter: 'stable both-edges',
+          WebkitOverflowScrolling: 'touch',
+          border: `1px solid ${theme.border}`,
+          borderRadius: 8,
+          padding: 6,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          background: theme.panelMuted,
+        }}
+      >
         {filtered.length === 0 ? (
-          <span style={{ fontStyle: 'italic', color: '#777' }}>No matches.</span>
+          <span style={{ fontStyle: 'italic', color: theme.textMuted }}>No matches.</span>
         ) : (
           filtered.map((item, idx) => (
             <button
@@ -235,9 +279,9 @@ const HistorySection = ({ history, onHistoryClick, historyIconUrl = ICON_HISTORY
                 gap: 8,
                 padding: '6px 8px',
                 borderRadius: 6,
-                border: '1px solid transparent',
+                border: `1px solid transparent`,
                 background: 'transparent',
-                color: '#cfd7ea',
+                color: theme.textSecondary,
                 fontFamily: 'monospace',
                 fontSize: '0.72rem',
                 textAlign: 'left',
@@ -245,12 +289,14 @@ const HistorySection = ({ history, onHistoryClick, historyIconUrl = ICON_HISTORY
                 cursor: 'pointer'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#2d3036';
-                e.currentTarget.style.borderColor = '#3b4452';
+                e.currentTarget.style.background = theme.accentSoft;
+                e.currentTarget.style.borderColor = theme.accent;
+                e.currentTarget.style.color = theme.textPrimary;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'transparent';
                 e.currentTarget.style.borderColor = 'transparent';
+                e.currentTarget.style.color = theme.textSecondary;
               }}
             >
               <img src={historyIconUrl} alt="" aria-hidden="true" style={{ width: 14, height: 14, display: 'block', opacity: 0.85 }} />
@@ -314,17 +360,26 @@ const HistoryActions = ({ history, onUpdateHistory, clearIconUrl, downloadIconUr
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    border: '1px solid #444',
-    background: '#2b2b2b',
+    border: `1px solid ${theme.border}`,
+    background: theme.buttonBg,
     borderRadius: 6,
-    cursor: 'pointer'
+    cursor: 'pointer',
+    color: theme.textSecondary,
   };
 
   return (
     <div
       role="toolbar"
       aria-label="History actions"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#1f1f1f', border: '1px solid #444', borderRadius: 8, padding: 4 }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: theme.panelMuted,
+        border: `1px solid ${theme.border}`,
+        borderRadius: 8,
+        padding: 4,
+      }}
     >
       <button
         className="button-icon"

@@ -18,7 +18,7 @@ from utils.oracle_utils import (
 from utils.synthetic_questions import generate_questions
 from utils.synonyms import (generate_synonyms, generate_synonyms_bulk)
 
-st.set_page_config(layout="wide", page_title="InsightFlow • Training Centre", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="ConBI • Training Centre", initial_sidebar_state="expanded")
 
 # === Global Synonym Generation Settings (always visible) ===
 import os as _os_for_syn  # avoid shadowing builtins
@@ -141,10 +141,10 @@ st.markdown("""
             box-shadow: inset 0 0 10px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35);
         }
         .brand-row { display: flex; align-items: baseline; gap: 6px; line-height: 1.05; }
-        .brand-insight { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.6px; color: transparent;
+        .brand-con { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.6px; color: transparent;
             background: linear-gradient(180deg, #b3ecff 0%, #6fe3ff 45%, #2dd4f7 100%);
             -webkit-background-clip: text; background-clip: text; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
-        .brand-flow { font-size: 1.7rem; font-weight: 1000; letter-spacing: 0.4px; color: transparent;
+        .brand-bi { font-size: 1.7rem; font-weight: 1000; letter-spacing: 0.4px; color: transparent;
             background: linear-gradient(180deg, #e1d1ff 0%, #b39cff 45%, #7a7cff 100%);
             -webkit-background-clip: text; background-clip: text; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
         .brand-accent { height: 3px; margin-top: 4px; border-radius: 6px; width: 100%; max-width: 160px;
@@ -189,8 +189,8 @@ st.markdown(
             </div>
             <div style="display:flex; flex-direction:column;">
               <div class="brand-row">
-                <span class="brand-insight">Insight</span>
-                <span class="brand-flow">Flow</span>
+                <span class="brand-con">Con</span>
+                <span class="brand-bi">BI</span>
               </div>
               <div class="brand-accent"></div>
             </div>
@@ -233,7 +233,7 @@ st.markdown("""
         .stSelectbox div[data-baseweb="select"] > div {
             border-radius: 6px !important;
             border: 1px solid #ccc !important;
-            padding: 0.5rem !important;
+            padding: 0.35rem 0.45rem !important;
             background-color: #fff !important;
             color: #000 !important;
         }
