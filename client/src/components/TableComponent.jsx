@@ -2396,6 +2396,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   const allDisabled = !!buttonsDisabled;
   const containerControlsDisabled = allDisabled && !dashboardMode;
   const paginationDisabled = !dashboardMode && (!perm.pagination || allDisabled);
+  const headerMenuDisabled = (!perm.headerMenu) || (allDisabled && !dashboardMode);
 
 
   const collectViewState = () => ({
@@ -3604,7 +3605,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
               return [...rowCols, ...perCol];
             })() : displayColumns).map((header, idx) => (
               <th
-                key={header}
+                key={`${header || 'col'}-${idx}`}
                 draggable={!isPivotView}
                 onDragStart={(e) => { if (isPivotView) return; e.dataTransfer.setData('text/plain', header); e.dataTransfer.effectAllowed = 'move'; }}
                 onDragOver={(e) => { if (!isPivotView) e.preventDefault(); }}
@@ -3636,7 +3637,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
                       type="button"
                       title="Filter values"
                       onClick={(e) => { e.stopPropagation(); setHeaderFilterOpenCol((c) => c === header ? null : header); }}
-                      style={{ padding: '0 6px', height: 22, borderRadius: 4, border: '1px solid #1e5b86', background: headerFilterOpenCol === header ? '#114b6d' : '#0e639c', color: '#fff', cursor: 'pointer', ...(allDisabled || !perm.headerMenu ? disabledStyle : {}) }}
+                      style={{ padding: '0 6px', height: 22, borderRadius: 4, border: '1px solid #1e5b86', background: headerFilterOpenCol === header ? '#114b6d' : '#0e639c', color: '#fff', cursor: 'pointer', ...(headerMenuDisabled ? disabledStyle : {}) }}
                     >▾</button>
                   </span>
                 )}
@@ -3667,7 +3668,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
                   />
                 )}
                 {!isPivotView && headerFilterOpenCol === header && (
-                  <div ref={el => (headerFilterMenuRef.current = el)} style={{ position: 'absolute', top: '100%', marginTop: 4, background: '#252526', border: '1px solid #444', borderRadius: 6, padding: 8, zIndex: 50, minWidth: 220, maxWidth: 320, maxHeight: 260, overflow: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', ...(idx === 0 ? { left: 0 } : { right: 0 }), ...(allDisabled || !perm.headerMenu ? disabledStyle : {}) }} onClick={(e) => e.stopPropagation()}>
+                  <div ref={el => (headerFilterMenuRef.current = el)} style={{ position: 'absolute', top: '100%', marginTop: 4, background: '#252526', border: '1px solid #444', borderRadius: 6, padding: 8, zIndex: 50, minWidth: 220, maxWidth: 320, maxHeight: 260, overflow: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', ...(idx === 0 ? { left: 0 } : { right: 0 }), ...(headerMenuDisabled ? disabledStyle : {}) }} onClick={(e) => e.stopPropagation()}>
                     <div style={{ color: '#fff', fontWeight: 600, marginBottom: 6 }}>Filter: {header}</div>
                     {(() => {
                       // Distinct values: use server when serverMode is enabled; fallback to client sampling otherwise

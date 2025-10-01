@@ -18,6 +18,252 @@ import uuid
 import requests
 import oracledb
 from dotenv import load_dotenv
+from datetime import datetime, date
+from decimal import Decimal
+
+
+def _read_lob(val):
+    if hasattr(val, 'read'):
+        return val.read()
+    return val
+
+
+def _safe_json_load(raw, default=None):
+    if default is None:
+        default = {}
+    try:
+        if raw is None:
+            return default
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode('utf-8', errors='ignore')
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                return default
+            return json.loads(raw)
+        if isinstance(raw, (dict, list)):
+            return raw
+    except Exception:
+        pass
+    return default
+
+
+def _view_spec_key(name, dataset_sig='', owner=''):
+    n = (name or '').strip().lower()
+    sig = (dataset_sig or '').strip().lower()
+    own = (owner or '').strip().lower()
+    return f"{n}|{sig}|{own}"
+
+
+def _extract_pin_id_from_payload(payload):
+    if not payload:
+        return None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return None
+    if not isinstance(payload, dict):
+        return None
+    pin_keys = ['pinId', 'pin_id', 'PIN_ID', 'pinnedId', 'pinned_id', 'PINID']
+    for key in pin_keys:
+        val = payload.get(key)
+        if val:
+            return str(val).strip()
+    nested_candidates = ['viewState', 'view_state', 'state', 'STATE', 'content', 'CONTENT']
+    for key in nested_candidates:
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            nested_pin = _extract_pin_id_from_payload(nested)
+            if nested_pin:
+                return nested_pin
+    return None
+
+
+def _extract_view_specs_from_layout(layout):
+    specs = []
+    seen = set()
+
+    def handle_widget(widget):
+        if not isinstance(widget, dict):
+            return
+        w_type = str(widget.get('type') or '').lower()
+        if w_type == 'view':
+            name = widget.get('viewName') or widget.get('name') or widget.get('title')
+            if not name:
+                return
+            dataset_sig = widget.get('datasetSig') or widget.get('dataset') or widget.get('sourceDataset') or ''
+            owner = widget.get('ownerName') or widget.get('owner') or ''
+            key = _view_spec_key(name, dataset_sig, owner)
+            if key not in seen:
+                specs.append({ 'viewName': name, 'datasetSig': dataset_sig, 'ownerName': owner })
+                seen.add(key)
+
+        child_widgets = widget.get('childWidgets') or {}
+        if isinstance(child_widgets, dict) and child_widgets:
+            child_layout = widget.get('childLayout')
+            if isinstance(child_layout, list):
+                for entry in child_layout:
+                    if not isinstance(entry, dict):
+                        continue
+                    child_id = entry.get('i')
+                    if child_id and child_id in child_widgets:
+                        handle_widget(child_widgets[child_id])
+            else:
+                for child in child_widgets.values():
+                    handle_widget(child)
+
+        nested_arrays = widget.get('widgets') or widget.get('children') or widget.get('items')
+        if isinstance(nested_arrays, list):
+            for child in nested_arrays:
+                handle_widget(child)
+
+    if isinstance(layout, dict):
+        widgets = layout.get('widgets')
+        if isinstance(widgets, list):
+            for widget in widgets:
+                handle_widget(widget)
+        else:
+            handle_widget(layout)
+    elif isinstance(layout, list):
+        for widget in layout:
+            handle_widget(widget)
+
+    return specs
+
+
+def _fetch_saved_view_snapshot(conn, view_name, dataset_sig=None, owner=None):
+    if not view_name:
+        return None
+    _ensure_views_table(conn)
+    cur = conn.cursor()
+    sql = "SELECT VIEW_NAME, DATASET_SIG, NVL(OWNER_NAME,''), CREATED_AT, CONTENT FROM VEDA_SAVED_VIEWS WHERE UPPER(VIEW_NAME) = UPPER(:name)"
+    binds = { 'name': view_name }
+    if dataset_sig:
+        sql += " AND NVL(DATASET_SIG,'') = NVL(:sig,'')"
+        binds['sig'] = dataset_sig
+    if owner is not None and owner != '':
+        sql += " AND NVL(OWNER_NAME,'') = NVL(:owner,'')"
+        binds['owner'] = owner
+    sql += " ORDER BY CREATED_AT DESC"
+    try:
+        cur.execute(sql, **binds)
+    except oracledb.DatabaseError as db_err:
+        err_obj = db_err.args[0] if db_err.args else None
+        if getattr(err_obj, 'code', None) == 942:
+            return None
+        raise
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    fallback = None
+    for view_name, sig, owner_name, created_at, content in rows:
+        parsed = _safe_json_load(_read_lob(content))
+        entry = {
+            'viewName': view_name,
+            'datasetSig': sig,
+            'ownerName': owner_name,
+            'createdAt': created_at.isoformat() if isinstance(created_at, (datetime, date)) else str(created_at) if created_at is not None else None,
+            'content': parsed,
+        }
+        if parsed:
+            return entry
+        if fallback is None:
+            fallback = entry
+    return fallback
+
+
+def _fetch_pinned_view_snapshot(conn, pin_id):
+    if not pin_id:
+        return None
+    _ensure_pins_table(conn)
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT CONTENT, VIEW_STATE, OPTIONS, ROW_COUNT, ORIGINAL_ROW_COUNT, DATASET_SIG, OWNER_NAME, CREATED_AT, EXPIRES_AT, TRUNCATED
+            FROM VEDA_PINNED_VIEWS
+            WHERE PIN_ID = :pin_id
+        """, pin_id=pin_id)
+    except oracledb.DatabaseError as db_err:
+        err_obj = db_err.args[0] if db_err.args else None
+        if getattr(err_obj, 'code', None) == 942:
+            return None
+        raise
+    row = cur.fetchone()
+    if not row:
+        return None
+    content, view_state, options, row_count, original_count, dataset_sig, owner_name, created_at, expires_at, truncated = row
+    payload_content = _safe_json_load(_read_lob(content))
+    state = _safe_json_load(_read_lob(view_state))
+    opts = _safe_json_load(_read_lob(options))
+    schema = payload_content.get('schema') if isinstance(payload_content, dict) else {}
+    query_meta = payload_content.get('query') if isinstance(payload_content, dict) else {}
+    return {
+        'pinId': pin_id,
+        'datasetSig': dataset_sig,
+        'ownerName': owner_name,
+        'createdAt': created_at.isoformat() if isinstance(created_at, (datetime, date)) else str(created_at) if created_at is not None else None,
+        'expiresAt': expires_at.isoformat() if isinstance(expires_at, (datetime, date)) else str(expires_at) if expires_at is not None else None,
+        'rowCount': row_count,
+        'originalRowCount': original_count,
+        'truncated': bool(truncated) if truncated is not None else None,
+        'state': state,
+        'options': opts,
+        'schema': schema or {},
+        'query': query_meta or {},
+    }
+
+
+def _load_dashboard_view_snapshots(conn, layout):
+    specs = _extract_view_specs_from_layout(layout)
+    if not specs:
+        return {}
+    snapshots = {}
+    pinned_cache = {}
+    for spec in specs:
+        name = spec.get('viewName')
+        dataset_sig = spec.get('datasetSig') or ''
+        owner = spec.get('ownerName') or ''
+        key = _view_spec_key(name, dataset_sig, owner)
+        try:
+            saved = _fetch_saved_view_snapshot(conn, name, dataset_sig, owner)
+        except oracledb.DatabaseError as db_err:
+            snapshots[key] = { 'error': f'Saved view fetch failed: {db_err}' }
+            continue
+        pinned_entry = None
+        pin_id = _extract_pin_id_from_payload(saved.get('content') if saved else None)
+        if pin_id:
+            if pin_id not in pinned_cache:
+                try:
+                    pinned_cache[pin_id] = _fetch_pinned_view_snapshot(conn, pin_id)
+                except oracledb.DatabaseError as db_err:
+                    pinned_cache[pin_id] = { 'error': f'Pinned view fetch failed: {db_err}' }
+            pinned_entry = pinned_cache.get(pin_id)
+            if pinned_entry and isinstance(pinned_entry, dict):
+                pinned_payload = {
+                    'viewState': pinned_entry.get('state'),
+                    'options': pinned_entry.get('options'),
+                    'schema': pinned_entry.get('schema'),
+                    'query': pinned_entry.get('query'),
+                    'pinId': pin_id,
+                }
+                if saved:
+                    if not saved.get('content'):
+                        saved['content'] = pinned_payload
+                    elif isinstance(saved.get('content'), dict):
+                        saved['content'] = { **saved.get('content'), **pinned_payload }
+                else:
+                    saved = {
+                        'viewName': name,
+                        'datasetSig': dataset_sig,
+                        'ownerName': owner,
+                        'content': pinned_payload,
+                    }
+        snapshots[key] = {
+            'view': saved,
+            'pinned': pinned_entry,
+        }
+    return snapshots
 
 app = Flask(__name__)
 
@@ -661,6 +907,7 @@ def table_pinned_view():
 def table_saved_views():
     dataset_sig = request.args.get('datasetSig')
     owner = request.args.get('owner')
+    view_name = request.args.get('viewName')
     try:
         conn = _oracle_connect()
     except Exception as e:
@@ -674,6 +921,8 @@ def table_saved_views():
             sql += " AND NVL(DATASET_SIG,'') = NVL(:sig,'')"; binds['sig'] = dataset_sig
         if owner is not None and owner != '':
             sql += " AND NVL(OWNER_NAME,'') = NVL(:owner,'')"; binds['owner'] = owner
+        if view_name:
+            sql += " AND UPPER(VIEW_NAME) = UPPER(:view_name)"; binds['view_name'] = view_name
         sql += " ORDER BY CREATED_AT DESC"
         cur.execute(sql, **binds)
         rows = []
@@ -695,6 +944,57 @@ def table_saved_views():
                 'content': parsed,
             })
         return jsonify({ 'views': rows })
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get('/table/saved_view')
+def table_saved_view():
+    view_name = request.args.get('viewName')
+    dataset_sig = request.args.get('datasetSig')
+    owner = request.args.get('owner')
+    if not view_name:
+        return jsonify({ 'error': 'viewName required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        _ensure_views_table(conn)
+        cur = conn.cursor()
+        sql = "SELECT VIEW_NAME, DATASET_SIG, NVL(OWNER_NAME,''), CREATED_AT, CONTENT FROM VEDA_SAVED_VIEWS WHERE UPPER(VIEW_NAME) = UPPER(:view_name)"
+        binds = { 'view_name': view_name }
+        if dataset_sig:
+            sql += " AND NVL(DATASET_SIG,'') = NVL(:sig,'')"; binds['sig'] = dataset_sig
+        if owner is not None and owner != '':
+            sql += " AND NVL(OWNER_NAME,'') = NVL(:owner,'')"; binds['owner'] = owner
+        sql += " ORDER BY CREATED_AT DESC"
+        cur.execute(sql, **binds)
+        row = cur.fetchone()
+        if not row:
+            return jsonify({ 'error': 'Not found' }), 404
+        view_name, sig, owner_name, created_at, content = row
+        try:
+            if hasattr(content, 'read'):
+                content_str = content.read()
+            else:
+                content_str = content
+            parsed = json.loads(content_str) if content_str else {}
+        except Exception:
+            parsed = {}
+        payload = {
+            'viewName': view_name,
+            'datasetSig': sig,
+            'ownerName': owner_name,
+            'createdAt': str(created_at),
+            'content': parsed,
+        }
+        return jsonify({ 'view': payload })
     except Exception as e:
         return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
     finally:
@@ -804,7 +1104,84 @@ def dashboard_get():
             parsed = json.loads(layout) if layout else {}
         except Exception:
             parsed = {}
-        return jsonify({ 'name': name, 'layout': parsed })
+
+        view_snapshots = {}
+        try:
+            view_snapshots = _load_dashboard_view_snapshots(conn, parsed)
+        except Exception as e:
+            view_snapshots = { '_error': f'Failed to load view snapshots: {e}' }
+
+        return jsonify({ 'name': name, 'layout': parsed, 'viewSnapshots': view_snapshots })
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.get('/dashboard/details')
+def dashboard_details():
+    name = request.args.get('name')
+    if not name:
+        return jsonify({ 'error': 'name required' }), 400
+    try:
+        conn = _oracle_connect()
+    except Exception as e:
+        return jsonify({ 'error': f'Oracle connect failed: {e}' }), 500
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT COLUMN_NAME FROM USER_TAB_COLUMNS WHERE TABLE_NAME = 'VEDA_DASHBOARD'")
+            col_rows = cur.fetchall()
+            column_names = { (row[0] or '').upper() for row in col_rows }
+        except oracledb.DatabaseError as db_err:
+            err_obj = db_err.args[0] if db_err.args else None
+            if getattr(err_obj, 'code', None) == 942:
+                return jsonify({ 'metadata': [], 'warning': 'VEDA_DASHBOARD table not found.' })
+            return jsonify({ 'error': f'Oracle select failed: {db_err}' }), 500
+        except Exception:
+            column_names = set()
+
+        filter_column = None
+        for candidate in ('NAME', 'DASHBOARD_NAME'):
+            if candidate in column_names:
+                filter_column = candidate
+                break
+
+        sql = 'SELECT * FROM VEDA_DASHBOARD'
+        binds = {}
+        if filter_column:
+            sql += f' WHERE {filter_column} = :name'
+            binds['name'] = name
+
+        try:
+            cur.execute(sql, **binds)
+        except oracledb.DatabaseError as db_err:
+            err_obj = db_err.args[0] if db_err.args else None
+            if getattr(err_obj, 'code', None) == 942:
+                return jsonify({ 'metadata': [], 'warning': 'VEDA_DASHBOARD table not found.' })
+            return jsonify({ 'error': f'Oracle select failed: {db_err}' }), 500
+        rows = cur.fetchall()
+        if not rows:
+            return jsonify({ 'metadata': [] })
+        dict_rows = _rows_to_dicts(cur, rows)
+
+        def normalize(val):
+            if isinstance(val, (datetime, date)):
+                return val.isoformat()
+            if isinstance(val, Decimal):
+                return float(val)
+            if hasattr(val, 'read'):
+                try:
+                    return val.read()
+                except Exception:
+                    return str(val)
+            return val
+
+        sanitized = []
+        for row in dict_rows:
+            sanitized.append({ key.lower(): normalize(value) for key, value in row.items() })
+        return jsonify({ 'metadata': sanitized })
     except Exception as e:
         return jsonify({ 'error': f'Oracle select failed: {e}' }), 500
     finally:

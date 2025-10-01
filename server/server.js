@@ -780,6 +780,7 @@ app.get('/api/table/saved_views', async (req, res) => {
     const qs = new URLSearchParams();
     if (req.query.datasetSig) qs.set('datasetSig', req.query.datasetSig);
     if (req.query.owner) qs.set('owner', req.query.owner);
+    if (req.query.viewName) qs.set('viewName', req.query.viewName);
     const url = `${FLASK_TABLE_OPS_URL}/table/saved_views?${qs.toString()}`;
     const flaskRes = await undiciFetch(url, { method: 'GET' });
     const ct = flaskRes.headers.get('content-type') || '';
@@ -792,6 +793,29 @@ app.get('/api/table/saved_views', async (req, res) => {
     }
   } catch (e) {
     console.error('saved_views proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Load single saved view by name
+app.get('/api/table/saved_view', async (req, res) => {
+  try {
+    const qs = new URLSearchParams();
+    if (req.query.viewName) qs.set('viewName', req.query.viewName);
+    if (req.query.datasetSig) qs.set('datasetSig', req.query.datasetSig);
+    if (req.query.owner) qs.set('owner', req.query.owner);
+    const url = `${FLASK_TABLE_OPS_URL}/table/saved_view?${qs.toString()}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    } else {
+      const text = await flaskRes.text();
+      return res.status(flaskRes.status).send(text);
+    }
+  } catch (e) {
+    console.error('saved_view proxy failed', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -850,6 +874,18 @@ app.get('/api/dashboard/get', async (req, res) => {
     if (ct.includes('application/json')) { const json = await flaskRes.json(); return res.status(flaskRes.status).json(json); }
     const text = await flaskRes.text(); return res.status(flaskRes.status).send(text);
   } catch (e) { console.error('dashboard get proxy failed', e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/dashboard/details', async (req, res) => {
+  try {
+    const qs = new URLSearchParams(); if (req.query.name) qs.set('name', req.query.name); if (req.query.owner) qs.set('owner', req.query.owner);
+    const suffix = qs.toString();
+    const url = `${FLASK_TABLE_OPS_URL}/dashboard/details${suffix ? `?${suffix}` : ''}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) { const json = await flaskRes.json(); return res.status(flaskRes.status).json(json); }
+    const text = await flaskRes.text(); return res.status(flaskRes.status).send(text);
+  } catch (e) { console.error('dashboard details proxy failed', e); res.status(500).json({ error: e.message }); }
 });
 
 // Full PDF export by re-running the query and rendering rows

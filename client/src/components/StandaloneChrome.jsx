@@ -96,9 +96,11 @@ export default function StandaloneChrome({ title, children }) {
     refreshHeapUsage,
   };
 
-  const enhancedChildren = React.Children.map(children, (child) =>
-    React.isValidElement(child) ? React.cloneElement(child, injectedProps) : child,
-  );
+  const enhancedChildren = React.Children.map(children, (child) => {
+    if (!React.isValidElement(child)) return child;
+    if (typeof child.type === 'string') return child;
+    return React.cloneElement(child, injectedProps);
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0b0b0b' }}>

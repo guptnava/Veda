@@ -85,7 +85,8 @@ export default function TableauStyleDashboard() {
   const [savedViews, setSavedViews] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [name, setName] = useState('');
+  const [dashboardName, setDashboardName] = useState('');
+  const [saveDraftName, setSaveDraftName] = useState('');
   // Dashboard size (Tableau-like): Automatic or Fixed Size
   const [sizeMode, setSizeMode] = useState('automatic'); // 'automatic' | 'fixed'
   const [fixedWidth, setFixedWidth] = useState(1200);
@@ -347,6 +348,18 @@ export default function TableauStyleDashboard() {
         )}
       </div>
     );
+  };
+
+  const handleSaveButtonToggle = () => {
+    if (showSavePanel) {
+      setShowSavePanel(false);
+      return;
+    }
+    setSaveDraftName(dashboardName || '');
+    setShowBorderMenu(false);
+    setShowNumberMenu(false);
+    setShowDateMenu(false);
+    setShowSavePanel(true);
   };
 
   const createWidgetMeta = (id, payload) => {
@@ -788,10 +801,19 @@ export default function TableauStyleDashboard() {
   };
 
   // Save dashboard
-  const saveDashboard = async () => {
+  const saveDashboard = async ({ targetName, closePanel = true } = {}) => {
+    if (!layout.length) {
+      setMessage('Add at least one widget before saving');
+      return false;
+    }
+    const effectiveName = (targetName !== undefined
+      ? targetName
+      : (dashboardName || saveDraftName || '')).trim();
+    if (!effectiveName) {
+      setMessage('Please provide a dashboard name');
+      return false;
+    }
     try {
-      const nm = (name || '').trim();
-      if (!nm) { setMessage('Please provide a dashboard name'); return; }
       const widgetsArr = layout.map(item => {
         const meta = widgets[item.i] || {};
         const widget = {
@@ -829,16 +851,25 @@ export default function TableauStyleDashboard() {
         }
         return widget;
       });
-      const body = { name: nm, layout: { widgets: widgetsArr } };
+      const body = { name: effectiveName, layout: { widgets: widgetsArr } };
       const res = await fetch('/api/dashboard/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const ct = res.headers.get('content-type') || '';
       const payload = ct.includes('application/json') ? await res.json() : await res.text();
       if (!res.ok) throw new Error((payload && payload.error) || (typeof payload === 'string' ? payload : `HTTP ${res.status}`));
-      setMessage('Dashboard saved');
-      setShowSavePanel(false);
+      const previousName = dashboardName;
+      setDashboardName(effectiveName);
+      setSaveDraftName(effectiveName);
+      if (closePanel) setShowSavePanel(false);
+      if (previousName && previousName === effectiveName) {
+        setMessage('Dashboard saved');
+      } else {
+        setMessage(`Dashboard saved as "${effectiveName}"`);
+      }
+      return true;
     } catch (e) {
       console.error('saveDashboard failed', e);
       setMessage('Failed to save dashboard');
+      return false;
     }
   };
 
@@ -857,6 +888,9 @@ export default function TableauStyleDashboard() {
   const dateButtonRef = useRef(null);
   const dateMenuRef = useRef(null);
   const [gridWidthKey, setGridWidthKey] = useState(0);
+  const hasWidgets = layout.length > 0;
+  const trimmedDraftName = saveDraftName.trim();
+  const canSaveAs = hasWidgets && trimmedDraftName.length > 0;
   useEffect(() => {
     const el = gridContainerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -945,17 +979,7 @@ export default function TableauStyleDashboard() {
           <div ref={saveButtonWrapperRef} style={{ position: 'relative' }}>
             <button
               type="button"
-              onClick={() => {
-                setShowSavePanel(prev => {
-                  const next = !prev;
-                  if (next) {
-                    setShowBorderMenu(false);
-                    setShowNumberMenu(false);
-                    setShowDateMenu(false);
-                  }
-                  return next;
-                });
-              }}
+              onClick={handleSaveButtonToggle}
               title="Save dashboard"
               style={{
                 width: 28,
@@ -995,27 +1019,63 @@ export default function TableauStyleDashboard() {
                 }}
               >
                 <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.95rem' }}>Save Dashboard</div>
-                <input
-                  placeholder="Dashboard name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#1e1e1e', color: '#ddd' }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowSavePanel(false)}
-                    style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveDashboard}
-                    style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #1e5b86', background: '#0e639c', color: '#fff', cursor: 'pointer' }}
-                  >
-                    Save
-                  </button>
+                {!hasWidgets && (
+                  <div style={{ color: '#fda29b', fontSize: '0.85rem' }}>Add at least one widget before saving.</div>
+                )}
+                {dashboardName && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '4px 0' }}>
+                    <div style={{ color: '#ddd', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      Current dashboard: <strong>{dashboardName}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { void saveDashboard({ targetName: dashboardName }); }}
+                      disabled={!hasWidgets}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #1e5b86',
+                        background: hasWidgets ? '#0e639c' : '#2d2d2d',
+                        color: '#fff',
+                        cursor: hasWidgets ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
+                <div style={{ borderTop: '1px solid #333', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ color: '#ccc', fontSize: '0.85rem' }}>Save As</label>
+                  <input
+                    placeholder="Dashboard name"
+                    value={saveDraftName}
+                    onChange={(e) => setSaveDraftName(e.target.value)}
+                    style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #444', background: '#1e1e1e', color: '#ddd' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowSavePanel(false)}
+                      style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #444', background: '#2d2d2d', color: '#fff', cursor: 'pointer' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void saveDashboard({ targetName: trimmedDraftName }); }}
+                      disabled={!canSaveAs}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #1e5b86',
+                        background: canSaveAs ? '#0e639c' : '#2d2d2d',
+                        color: '#fff',
+                        cursor: canSaveAs ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      Save As
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1611,7 +1671,7 @@ export default function TableauStyleDashboard() {
                     <div className="widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #333', cursor: 'grab' }}>
                       <div style={{ color: '#fff', fontWeight: 600 }}>{meta.orientation === 'v' ? 'Vertical' : 'Horizontal'} Container</div>
                       <button type="button" onClick={() => removeWidget(item.i)} title="Close" aria-label="Close" style={{ background: 'transparent', border: 'none', padding: 4, cursor: 'pointer' }}>
-                        <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 12, height: 12, opacity: 0.9 }} />
+                        <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 16, height: 16, opacity: 0.9 }} />
                       </button>
                     </div>
                     <div
@@ -1731,7 +1791,7 @@ export default function TableauStyleDashboard() {
                                     aria-label="Close"
                                     style={{ background: 'transparent', border: 'none', padding: 2, cursor: 'pointer' }}
                                   >
-                                    <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 12, height: 12, opacity: 0.9 }} />
+                                    <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 16, height: 16, opacity: 0.9 }} />
                                   </button>
                                 </div>
                                 <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 6, color: '#bbb', fontSize: '0.9rem' }}>
@@ -1826,7 +1886,7 @@ export default function TableauStyleDashboard() {
                         : meta?.viewName || 'Widget'}
                     </div>
                     <button type="button" onClick={() => removeWidget(item.i)} title="Close" aria-label="Close" style={{ background: 'transparent', border: 'none', padding: 4, cursor: 'pointer' }}>
-                      <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 12, height: 12, opacity: 0.9 }} />
+                      <img src={closeIcon} alt="" aria-hidden="true" style={{ width: 16, height: 16, opacity: 0.9 }} />
                     </button>
                   </div>
                   <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 8 }}>
