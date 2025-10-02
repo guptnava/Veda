@@ -343,7 +343,7 @@ const DerivedPicker = ({ baseHeaders, derivedCols, setDerivedCols, useFixed = tr
   );
 };
 
-const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEFAULT_PAGE_SIZE, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null, dashboardMode = false }) => {
+const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEFAULT_PAGE_SIZE, initialFontSize = 11, buttonsDisabled = false, buttonPermissions, perfOptions, previewOptions, exportContext, totalRows, virtualizeOnMaximize = true, virtualRowHeight = 28, onMaximize, serverMode = false, tableOpsMode = 'flask', pushDownDb = false, initialMaximized = false, showMaximizeControl = true, initialViewState = null, initialSchema = null, dashboardMode = false, disableViewPersistence = false }) => {
   const [sortConfig, setSortConfig] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleColumns, setVisibleColumns] = useState([]);
@@ -2404,6 +2404,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
   const containerControlsDisabled = allDisabled && !dashboardMode;
   const paginationDisabled = !dashboardMode && (!perm.pagination || allDisabled);
   const headerMenuDisabled = (!perm.headerMenu) || (allDisabled && !dashboardMode);
+  const viewPersistenceDisabled = !!disableViewPersistence;
 
 
   const collectViewState = () => ({
@@ -2629,7 +2630,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           alt="Save View"
           title="Save current view"
           active={false}
-          disabled={allDisabled}
+          disabled={allDisabled || viewPersistenceDisabled}
           onClick={saveCurrentView}
         />
         {/* Pin View */}
@@ -2647,7 +2648,7 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
           alt="Load View"
           title="Load saved view"
           active={!!showLoadPicker}
-          disabled={allDisabled}
+          disabled={allDisabled || viewPersistenceDisabled}
           onClick={() => { setShowLoadPicker(v => !v); if (!showLoadPicker) fetchSavedViews(); }}
         />
         {/* Column Picker */}

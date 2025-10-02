@@ -148,7 +148,7 @@ export default function StandaloneChrome({ title, children }) {
         maxVisibleMessages={maxVisibleMessages}
         setMaxVisibleMessages={setMaxVisibleMessages}
       />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>{enhancedChildren}</div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{enhancedChildren}</div>
       <FooterBar
         heapUsedMB={footerMetrics.heapUsedMB}
         rowsFetchedTotal={footerMetrics.rowsFetchedTotal}

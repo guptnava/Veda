@@ -8,6 +8,7 @@ import { spawn } from 'child_process';
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 import { fileURLToPath } from 'url';
 
@@ -73,6 +74,108 @@ function getDistinctCache(key) {
 }
 function setDistinctCache(key, data) {
   distinctCache.set(key, { data, expiresAt: Date.now() + DISTINCT_TTL_MS });
+}
+
+const UPLOADS_ROOT = path.resolve(__dirname, '../uploads');
+const CSV_UPLOAD_DIR = path.join(UPLOADS_ROOT, 'csv');
+
+async function ensureDir(dirPath) {
+  await fs.promises.mkdir(dirPath, { recursive: true });
+}
+
+function sanitizeFileName(name) {
+  if (!name) return 'data.csv';
+  const base = path.basename(name);
+  return base.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'data.csv';
+}
+
+function ensureWithin(baseDir, candidate) {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(baseDir, candidate);
+  if (!resolvedTarget.startsWith(resolvedBase)) {
+    throw new Error('Invalid path');
+  }
+  return resolvedTarget;
+}
+
+function parseCsv(content) {
+  const rows = [];
+  let current = '';
+  let inQuotes = false;
+  let row = [];
+  const input = content || '';
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        const next = input[i + 1];
+        if (next === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(current);
+      current = '';
+      continue;
+    }
+    if (ch === '\n') {
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = '';
+      continue;
+    }
+    if (ch === '\r') {
+      const next = input[i + 1];
+      if (next === '\n') {
+        i += 1;
+      }
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  // push last value
+  row.push(current);
+  rows.push(row);
+
+  // remove trailing empty rows produced by final newline
+  while (rows.length && rows[rows.length - 1].every(cell => cell === '')) {
+    rows.pop();
+  }
+
+  if (!rows.length) {
+    return { headers: [], records: [] };
+  }
+
+  const headerRow = rows.shift().map(h => (h || '').trim());
+  const headers = headerRow.map((h, idx) => (h ? h : `column_${idx + 1}`));
+  const records = rows
+    .filter(r => r.some(cell => cell !== ''))
+    .map(cells => {
+      const record = {};
+      headers.forEach((header, idx) => {
+        record[header] = idx < cells.length ? cells[idx] : '';
+      });
+      return record;
+    });
+
+  return { headers, records };
 }
 
 // Stable stringify to build cache keys irrespective of key order
@@ -816,6 +919,125 @@ app.get('/api/table/saved_view', async (req, res) => {
     }
   } catch (e) {
     console.error('saved_view proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// CSV metadata endpoints proxied to table-ops Flask service
+app.get('/api/table/csv_entries', async (req, res) => {
+  try {
+    const url = `${FLASK_TABLE_OPS_URL}/table/csv_entries`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    }
+    const text = await flaskRes.text();
+    return res.status(flaskRes.status).send(text);
+  } catch (e) {
+    console.error('csv_entries proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/table/csv_entries', async (req, res) => {
+  let storedFullPath = null;
+  let storedRelative = null;
+  try {
+    const { fileName, content } = req.body || {};
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ error: 'content required' });
+    }
+    const safeName = sanitizeFileName(fileName);
+    const uniqueSuffix = crypto.randomBytes(4).toString('hex');
+    storedRelative = path.posix.join('csv', `${Date.now()}_${uniqueSuffix}_${safeName}`);
+    storedFullPath = ensureWithin(UPLOADS_ROOT, storedRelative);
+    await ensureDir(path.dirname(storedFullPath));
+    await fs.promises.writeFile(storedFullPath, content, 'utf8');
+
+    const payload = {
+      fileName: safeName,
+      storedPath: storedRelative,
+      originalName: fileName || safeName,
+    };
+    const url = `${FLASK_TABLE_OPS_URL}/table/csv_entries`;
+    const flaskRes = await undiciFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    }
+    const text = await flaskRes.text();
+    return res.status(flaskRes.status).send(text);
+  } catch (e) {
+    console.error('csv_entry create failed', e);
+    if (storedFullPath) {
+      try {
+        await fs.promises.unlink(storedFullPath);
+      } catch (unlinkErr) {
+        console.error('failed to remove CSV file after error', unlinkErr);
+      }
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/table/csv_entries/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const url = `${FLASK_TABLE_OPS_URL}/table/csv_entries/${id}`;
+    const flaskRes = await undiciFetch(url, { method: 'GET' });
+    const ct = flaskRes.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await flaskRes.json();
+      return res.status(flaskRes.status).json(json);
+    }
+    const text = await flaskRes.text();
+    return res.status(flaskRes.status).send(text);
+  } catch (e) {
+    console.error('csv_entry proxy failed', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/table/csv_entries/:id/load', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const metaUrl = `${FLASK_TABLE_OPS_URL}/table/csv_entries/${id}`;
+    const metaRes = await undiciFetch(metaUrl, { method: 'GET' });
+    if (!metaRes.ok) {
+      const ct = metaRes.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const json = await metaRes.json();
+        return res.status(metaRes.status).json(json);
+      }
+      const text = await metaRes.text();
+      return res.status(metaRes.status).send(text);
+    }
+    const meta = await metaRes.json();
+    const entry = meta?.entry;
+    if (!entry || !entry.storedPath) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    const normalized = entry.storedPath.replace(/\\/g, '/');
+    const absolutePath = ensureWithin(UPLOADS_ROOT, normalized);
+    const csvContent = await fs.promises.readFile(absolutePath, 'utf8');
+    const { headers, records } = parseCsv(csvContent);
+    return res.json({
+      entry,
+      table: {
+        headers,
+        data: records,
+        totalRows: records.length,
+      },
+    });
+  } catch (e) {
+    console.error('csv_entry load failed', e);
     res.status(500).json({ error: e.message });
   }
 });

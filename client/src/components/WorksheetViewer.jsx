@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import StandaloneChrome from './StandaloneChrome';
 import TableComponent from './TableComponent';
 import savedViewIcon from '../icons/worksheet_viewer.svg';
@@ -27,6 +27,42 @@ const bevelSectionStyle = {
 };
 
 const MIN_LEFT_PANEL_SECTION_HEIGHT = 108;
+const FOOTER_BAR_HEIGHT = 60;
+const LEFT_PANEL_VERTICAL_GAP = 8;
+const LEFT_PANEL_VERTICAL_PADDING = 32; // top + bottom padding inside left column
+const RESIZER_THICKNESS = 6;
+const SAVED_MIN_HEIGHT = 160;
+const DETAILS_MIN_HEIGHT = 140;
+const CSV_MIN_HEIGHT = 140;
+
+const useBoundedSectionHeight = (footerHeight = FOOTER_BAR_HEIGHT, minHeight = 160) => {
+  const sectionRef = useRef(null);
+  const [maxHeight, setMaxHeight] = useState(null);
+
+  const recalcHeight = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const node = sectionRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    if (!rect) return;
+    const available = Math.max(minHeight, Math.floor(window.innerHeight - footerHeight - rect.top));
+    setMaxHeight(prev => (prev === available ? prev : available));
+  }, [footerHeight, minHeight]);
+
+  useLayoutEffect(() => {
+    recalcHeight();
+  }, [recalcHeight]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return () => {};
+    window.addEventListener('resize', recalcHeight);
+    return () => {
+      window.removeEventListener('resize', recalcHeight);
+    };
+  }, [recalcHeight]);
+
+  return { ref: sectionRef, maxHeight, recalcHeight };
+};
 
 function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsage = () => {} }) {
   const [savedViews, setSavedViews] = useState([]);
@@ -46,7 +82,138 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
   const [detailsCollapsed, setDetailsCollapsed] = useState(false);
   const [leftPanelSplit, setLeftPanelSplit] = useState(0.6);
   const leftPanelContentRef = useRef(null);
+  const { ref: leftPanelHeightRef, maxHeight: leftPanelMaxHeight, recalcHeight: recalcLeftPanelHeight } =
+    useBoundedSectionHeight(FOOTER_BAR_HEIGHT, 320);
   const pendingResizeCleanupRef = useRef(null);
+  const setLeftPanelContentRef = useCallback((node) => {
+    leftPanelContentRef.current = node;
+    leftPanelHeightRef.current = node;
+    if (node) {
+      recalcLeftPanelHeight();
+    }
+  }, [leftPanelHeightRef, recalcLeftPanelHeight]);
+
+  const [csvEntries, setCsvEntries] = useState([]);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [csvError, setCsvError] = useState('');
+  const [csvCollapsed, setCsvCollapsed] = useState(false);
+  const [csvUploadBusy, setCsvUploadBusy] = useState(false);
+  const [csvUploadError, setCsvUploadError] = useState('');
+  const [activeCsvEntry, setActiveCsvEntry] = useState(null);
+  const { ref: dropZoneRef, maxHeight: dropZoneMaxHeight, recalcHeight: recalcDropZoneHeight } =
+    useBoundedSectionHeight(FOOTER_BAR_HEIGHT, 320);
+
+  const refreshCsvEntries = useCallback(async () => {
+    try {
+      setCsvLoading(true);
+      setCsvError('');
+      const res = await fetch('/api/table/csv_entries');
+      const ct = res.headers.get('content-type') || '';
+      const payload = ct.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+      setCsvEntries(entries);
+    } catch (err) {
+      console.error('CSV entries fetch failed', err);
+      setCsvError(err?.message || 'Failed to load CSV entries');
+      setCsvEntries([]);
+    } finally {
+      setCsvLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshCsvEntries();
+  }, [refreshCsvEntries]);
+
+  useEffect(() => {
+    if (!leftPanelOpen) return;
+    recalcLeftPanelHeight();
+  }, [recalcLeftPanelHeight, leftPanelOpen, savedListCollapsed, detailsCollapsed, csvCollapsed, viewsLoading, csvLoading, activeTableProps]);
+
+  useEffect(() => {
+    recalcDropZoneHeight();
+  }, [recalcDropZoneHeight, leftPanelOpen, activeTableProps, dropError, dropActive]);
+
+  const resizerVisible = !savedListCollapsed && !detailsCollapsed;
+
+  const sectionHeights = useMemo(() => {
+    if (!leftPanelOpen || !leftPanelMaxHeight) {
+      return { saved: null, details: null, csv: null };
+    }
+    const spacingCount = 3; // saved➜resizer, resizer➜details, details➜csv
+    const totalSpacing = LEFT_PANEL_VERTICAL_GAP * spacingCount + (resizerVisible ? RESIZER_THICKNESS : 0);
+    const available = Math.max(0, leftPanelMaxHeight - LEFT_PANEL_VERTICAL_PADDING - totalSpacing);
+    if (available <= 0) {
+      return { saved: null, details: null, csv: null };
+    }
+
+    const sections = [
+      {
+        key: 'saved',
+        collapsed: savedListCollapsed,
+        min: savedListCollapsed ? LEFT_PANEL_VERTICAL_GAP : SAVED_MIN_HEIGHT,
+        weight: savedListCollapsed ? 0 : leftPanelSplit,
+      },
+      {
+        key: 'details',
+        collapsed: detailsCollapsed,
+        min: detailsCollapsed ? LEFT_PANEL_VERTICAL_GAP : DETAILS_MIN_HEIGHT,
+        weight: detailsCollapsed ? 0 : (1 - leftPanelSplit) * 0.55,
+      },
+      {
+        key: 'csv',
+        collapsed: csvCollapsed,
+        min: csvCollapsed ? LEFT_PANEL_VERTICAL_GAP : CSV_MIN_HEIGHT,
+        weight: csvCollapsed ? 0 : (1 - leftPanelSplit) * 0.45,
+      },
+    ];
+
+    const activeSections = sections.filter(section => !section.collapsed);
+    if (!activeSections.length) {
+      return { saved: null, details: null, csv: null };
+    }
+
+    const minSum = activeSections.reduce((sum, section) => sum + section.min, 0);
+    const totalWeight = activeSections.reduce((sum, section) => sum + section.weight, 0) || activeSections.length;
+
+    const heights = { saved: null, details: null, csv: null };
+    if (available <= minSum) {
+      let assigned = 0;
+      activeSections.forEach((section, index) => {
+        const proportion = minSum > 0 ? section.min / minSum : 0;
+        let height = Math.floor(available * proportion);
+        if (index === activeSections.length - 1) {
+          height = Math.max(0, available - assigned);
+        }
+        assigned += height;
+        heights[section.key] = height;
+      });
+    } else {
+      const extra = available - minSum;
+      let assigned = 0;
+      activeSections.forEach((section, index) => {
+        const weightShare = totalWeight > 0 ? section.weight / totalWeight : 1 / activeSections.length;
+        const extraShare = Math.round(extra * weightShare);
+        let height = section.min + extraShare;
+        if (index === activeSections.length - 1) {
+          height = Math.max(0, available - assigned);
+        }
+        assigned += height;
+        heights[section.key] = height;
+      });
+    }
+
+    return heights;
+  }, [leftPanelOpen, leftPanelMaxHeight, savedListCollapsed, detailsCollapsed, csvCollapsed, leftPanelSplit, resizerVisible]);
+
+  const savedSectionHeight = sectionHeights.saved;
+  const detailsSectionHeight = sectionHeights.details;
+  const csvSectionHeight = sectionHeights.csv;
 
   const detailEntries = useMemo(() => {
     if (!activeViewDetails) return [];
@@ -161,23 +328,53 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
     pendingResizeCleanupRef.current = handlePointerUp;
   }, [detailsCollapsed, savedListCollapsed]);
 
-  const savedSectionStyle = useMemo(() => ({
-    ...bevelSectionStyle,
-    flex: savedListCollapsed ? '0 0 auto' : `${leftPanelSplit} 1 0%`,
-    padding: savedListCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
-    overflow: 'hidden',
-    transition: 'flex 0.18s ease',
-  }), [savedListCollapsed, leftPanelSplit]);
+  const savedSectionStyle = useMemo(() => {
+    const style = {
+      ...bevelSectionStyle,
+      flex: '0 0 auto',
+      padding: savedListCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
+      overflow: 'hidden',
+      transition: 'height 0.2s ease',
+    };
+    if (!savedListCollapsed && savedSectionHeight != null) {
+      style.height = `${savedSectionHeight}px`;
+      style.maxHeight = `${savedSectionHeight}px`;
+      style.overflowY = 'auto';
+    }
+    return style;
+  }, [savedListCollapsed, savedSectionHeight]);
 
-  const detailsSectionStyle = useMemo(() => ({
-    ...bevelSectionStyle,
-    flex: detailsCollapsed ? '0 0 auto' : `${Math.max(0.1, (1 - leftPanelSplit) * 1.3)} 1 0%`,
-    padding: detailsCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
-    overflow: 'hidden',
-    transition: 'flex 0.18s ease',
-  }), [detailsCollapsed, leftPanelSplit]);
+  const detailsSectionStyle = useMemo(() => {
+    const style = {
+      ...bevelSectionStyle,
+      flex: '0 0 auto',
+      padding: detailsCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
+      overflow: 'hidden',
+      transition: 'height 0.2s ease',
+    };
+    if (!detailsCollapsed && detailsSectionHeight != null) {
+      style.height = `${detailsSectionHeight}px`;
+      style.maxHeight = `${detailsSectionHeight}px`;
+      style.overflowY = 'auto';
+    }
+    return style;
+  }, [detailsCollapsed, detailsSectionHeight]);
 
-  const resizerVisible = !savedListCollapsed && !detailsCollapsed;
+  const csvSectionStyle = useMemo(() => {
+    const style = {
+      ...bevelSectionStyle,
+      flex: '0 0 auto',
+      padding: csvCollapsed ? '10px 10px 8px' : bevelSectionStyle.padding,
+      overflow: 'hidden',
+      transition: 'height 0.2s ease',
+    };
+    if (!csvCollapsed && csvSectionHeight != null) {
+      style.height = `${csvSectionHeight}px`;
+      style.maxHeight = `${csvSectionHeight}px`;
+      style.overflowY = 'auto';
+    }
+    return style;
+  }, [csvCollapsed, csvSectionHeight]);
 
   useEffect(() => () => {
     if (pendingResizeCleanupRef.current) {
@@ -217,7 +414,63 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
     }
   }, []);
 
-  const handleDropArea = useCallback((event) => {
+  const handleCsvFileChange = useCallback(async (event) => {
+    const input = event?.target;
+    const file = input?.files && input.files[0];
+    if (!file) return;
+    setCsvUploadError('');
+    setCsvUploadBusy(true);
+    try {
+      const textContent = await file.text();
+      const res = await fetch('/api/table/csv_entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: file.name, content: textContent }),
+      });
+      const ct = res.headers.get('content-type') || '';
+      const payload = ct.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const newEntry = payload?.entry || null;
+      if (newEntry) {
+        setCsvEntries(prev => {
+          const filtered = Array.isArray(prev) ? prev.filter(entry => entry?.id !== newEntry.id) : [];
+          return [newEntry, ...filtered];
+        });
+        setActiveCsvEntry(newEntry);
+      }
+      await refreshCsvEntries();
+    } catch (err) {
+      console.error('CSV upload failed', err);
+      setCsvUploadError(err?.message || 'Failed to upload CSV');
+    } finally {
+      setCsvUploadBusy(false);
+      if (input) {
+        input.value = '';
+      }
+    }
+  }, [refreshCsvEntries]);
+
+  const handleCsvDragStart = useCallback((event, entry) => {
+    if (!event?.dataTransfer || !entry?.id) return;
+    try {
+      const payload = JSON.stringify({ kind: 'csv-entry', entry: { id: entry.id } });
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('application/json', payload);
+      event.dataTransfer.setData('text/plain', payload);
+    } catch (err) {
+      console.warn('CSV drag start failed', err);
+    }
+  }, []);
+
+  const handleCsvSelect = useCallback((entry) => {
+    setActiveCsvEntry(entry || null);
+  }, []);
+
+  const handleDropArea = useCallback(async (event) => {
     event.preventDefault();
     setDropActive(false);
     setDropError('');
@@ -233,8 +486,48 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
       try {
         parsed = JSON.parse(txt);
       } catch (parseErr) {
-        throw new Error('Could not parse saved view payload');
+        throw new Error('Could not parse drop payload');
       }
+
+      if (parsed && parsed.kind === 'csv-entry') {
+        const entryId = parsed.entry?.id ?? parsed.id;
+        if (!entryId) {
+          throw new Error('CSV entry missing identifier');
+        }
+        const res = await fetch(`/api/table/csv_entries/${entryId}/load`);
+        const ct = res.headers.get('content-type') || '';
+        const payload = ct.includes('application/json') ? await res.json() : await res.text();
+        if (!res.ok) {
+          const message = (payload && payload.error)
+            || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+          throw new Error(message);
+        }
+        const entryMeta = payload?.entry || null;
+        const table = payload?.table || {};
+        const tableData = Array.isArray(table?.data) ? table.data : [];
+        const tableHeaders = Array.isArray(table?.headers) ? table.headers : [];
+        const total = typeof table?.totalRows === 'number' ? table.totalRows : tableData.length;
+        setSelectedViewKey('');
+        setActiveViewKey('');
+        setActiveViewDetails(null);
+        setActiveCsvEntry(entryMeta || null);
+        setActiveTableProps({
+          data: tableData,
+          headers: tableHeaders,
+          totalRows: total,
+          serverMode: false,
+          disableViewPersistence: true,
+          tableOpsMode: 'csv-import',
+        });
+        setTableRenderKey(prev => prev + 1);
+        try {
+          onFooterMetricsChange({ rowsFetchedTotal: total, avgResponseTime: NaN });
+          refreshHeapUsage();
+        } catch {}
+        setLeftViewStateExpanded(false);
+        return;
+      }
+
       const viewMeta = parsed && parsed.kind === 'saved-view' && parsed.view
         ? parsed.view
         : (parsed && typeof parsed === 'object' ? parsed : null);
@@ -255,8 +548,9 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
         throw new Error('Dropped view does not include table state.');
       }
       const details = extractSavedViewDetails(viewMeta) || null;
+      setActiveCsvEntry(null);
       setActiveViewDetails(details);
-      setActiveTableProps({ ...tableBundle.tableProps });
+      setActiveTableProps({ ...tableBundle.tableProps, disableViewPersistence: false });
       setTableRenderKey(prev => prev + 1);
       try {
         const total = tableBundle.tableProps.totalRows ?? tableBundle.tableProps.data?.length ?? 0;
@@ -265,10 +559,11 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
       } catch {}
       setLeftViewStateExpanded(false);
     } catch (err) {
-      setDropError(err?.message || 'Failed to handle dropped view');
+      setDropError(err?.message || 'Failed to handle drop payload');
       setActiveViewKey('');
       setActiveViewDetails(null);
       setActiveTableProps(null);
+      setActiveCsvEntry(null);
       setTableRenderKey(0);
     }
   }, [onFooterMetricsChange, refreshHeapUsage]);
@@ -351,14 +646,17 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
           </button>
           {leftPanelOpen ? (
             <div
-              ref={leftPanelContentRef}
+              ref={setLeftPanelContentRef}
               style={{
                 flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 8,
+                gap: LEFT_PANEL_VERTICAL_GAP,
                 padding: '12px 10px',
                 minHeight: 0,
+                height: leftPanelOpen && leftPanelMaxHeight ? `${leftPanelMaxHeight}px` : 'auto',
+                maxHeight: leftPanelOpen && leftPanelMaxHeight ? `${leftPanelMaxHeight}px` : undefined,
+                overflow: 'hidden',
               }}
             >
               <div style={savedSectionStyle}>
@@ -573,12 +871,149 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                       Drop a saved view to display its details here.
                     </div>
                   )}
+              </div>
+            ) : null}
+          </div>
+          <div style={csvSectionStyle}>
+            <button
+              type="button"
+              onClick={() => setCsvCollapsed(prev => !prev)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                border: 'none',
+                background: 'transparent',
+                color: '#9ab5e9',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                padding: '2px 2px 4px',
+              }}
+              aria-expanded={!csvCollapsed}
+            >
+              <span>CSV Details</span>
+              <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>{csvCollapsed ? '▸' : '▾'}</span>
+            </button>
+            {!csvCollapsed ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  overflowY: 'auto',
+                  paddingRight: 2,
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontSize: '0.75rem', color: '#8fa9d8', fontWeight: 600 }}>Choose CSV</span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={handleCsvFileChange}
+                      disabled={csvUploadBusy}
+                      style={{
+                        background: '#0f141f',
+                        color: '#d6def5',
+                        border: '1px solid #1f2a3b',
+                        borderRadius: 6,
+                        padding: '6px 8px',
+                        fontSize: '0.75rem',
+                      }}
+                    />
+                  </label>
+                  {csvUploadBusy ? (
+                    <div style={{ fontSize: '0.74rem', color: '#8a9cc0' }}>Uploading CSV…</div>
+                  ) : null}
+                  {csvUploadError ? (
+                    <div style={{ fontSize: '0.74rem', color: '#ff8686' }}>{csvUploadError}</div>
+                  ) : null}
                 </div>
+                <div style={{ fontSize: '0.72rem', color: '#859bca', lineHeight: 1.4 }}>
+                  Drag a saved CSV entry onto the drop zone to preview it. Uploaded files are stored on the server and listed below.
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    overflowY: 'auto',
+                    maxHeight: 180,
+                    paddingRight: 2,
+                  }}
+                >
+                  {csvLoading ? (
+                    <div style={{ color: '#8a9cc0', fontSize: '0.78rem' }}>Loading CSV entries…</div>
+                  ) : csvError ? (
+                    <div style={{ color: '#ff8686', fontSize: '0.78rem' }}>{csvError}</div>
+                  ) : csvEntries.length ? (
+                    csvEntries.map((entry) => {
+                      if (!entry) return null;
+                      const name = entry.fileName || entry.originalName || `CSV ${entry.id}`;
+                      const isActive = activeCsvEntry?.id === entry.id;
+                      const subtext = entry.storedPath || '—';
+                      return (
+                        <button
+                          type="button"
+                          key={`csv-entry-${entry.id}`}
+                          draggable
+                          onDragStart={(event) => handleCsvDragStart(event, entry)}
+                          onClick={() => handleCsvSelect(entry)}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'flex-start',
+                            gap: 4,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: isActive ? 'rgba(14, 99, 156, 0.24)' : 'rgba(23, 34, 49, 0.55)',
+                            color: '#e7ecf8',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease',
+                          }}
+                          title={subtext}
+                        >
+                          <span style={{ fontSize: '0.76rem', fontWeight: 600 }}>{name}</span>
+                          <span style={{ fontSize: '0.68rem', color: '#9aaac7', wordBreak: 'break-all' }}>{subtext}</span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div style={{ color: '#8a9cc0', fontSize: '0.78rem' }}>No CSV entries saved yet.</div>
+                  )}
+                </div>
+                {activeCsvEntry ? (
+                  <div
+                    style={{
+                      border: '1px solid #1f2a3b',
+                      borderRadius: 6,
+                      padding: '8px 10px',
+                      background: 'rgba(17, 23, 34, 0.5)',
+                      fontSize: '0.72rem',
+                      color: '#9aaac7',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <div style={{ color: '#d6def5', fontWeight: 600 }}>Active CSV</div>
+                    <div>{activeCsvEntry.fileName || activeCsvEntry.originalName || `Entry ${activeCsvEntry.id}`}</div>
+                    {activeCsvEntry.storedPath ? (
+                      <div style={{ wordBreak: 'break-all' }}>Path: {activeCsvEntry.storedPath}</div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
+      ) : null}
+    </div>
         <div style={{ flex: 1, display: 'flex', minHeight: 0, background: '#11131a', color: '#f6f8fc', paddingBottom: 16 }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, padding: 24, paddingBottom: 0, minWidth: 0, minHeight: 0 }}>
             <div
@@ -592,6 +1027,7 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                 }
               }}
               onDrop={handleDropArea}
+              ref={dropZoneRef}
               style={{
                 border: dropActive ? '2px dashed #0e639c' : '2px dashed #2b3646',
                 background: dropActive ? 'rgba(14, 99, 156, 0.12)' : 'transparent',
@@ -602,7 +1038,9 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                 flexDirection: 'column',
                 gap: 16,
                 minHeight: 0,
-                flex: 1,
+                flex: dropZoneMaxHeight ? '0 0 auto' : 1,
+                height: dropZoneMaxHeight ? `${dropZoneMaxHeight}px` : undefined,
+                maxHeight: dropZoneMaxHeight ? `${dropZoneMaxHeight}px` : undefined,
                 overflowY: 'auto',
                 overflowX: 'hidden',
                 boxSizing: 'border-box',
@@ -610,8 +1048,7 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
             >
               <div style={{ fontSize: '1rem', fontWeight: 600 }}>Drop Zone</div>
               <div style={{ fontSize: '0.9rem', color: '#9aaac7', lineHeight: 1.4 }}>
-                Drag a saved view from the list and drop it here to render its dataset. Selecting a view only highlights it—
-                the table refreshes once the view is dropped.
+                Drag a saved view or CSV entry from the left panel and drop it here to render its dataset. Selecting an item only highlights it—the table refreshes once it is dropped.
               </div>
               {dropError ? (
                 <div style={{ fontSize: '0.85rem', color: '#ff8686' }}>{dropError}</div>
@@ -631,7 +1068,11 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                   }}
                 >
                   <div style={{ fontSize: '0.82rem', color: '#9aaac7', fontWeight: 600 }}>
-                    {activeViewDetails?.viewName ? `View: ${activeViewDetails.viewName}` : 'Dropped View'}
+                    {activeViewDetails?.viewName
+                      ? `View: ${activeViewDetails.viewName}`
+                      : (activeCsvEntry?.fileName || activeCsvEntry?.originalName)
+                        ? `CSV: ${activeCsvEntry.fileName || activeCsvEntry.originalName}`
+                        : 'Dropped View'}
                   </div>
                   <div style={{ flex: 1, minHeight: 0 }}>
                     {activeTableProps.serverMode || (Array.isArray(activeTableProps.data) && activeTableProps.data.length)
@@ -639,7 +1080,7 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                         <TableComponent
                           key={`drop-table-${tableRenderKey}`}
                           {...activeTableProps}
-                          buttonsDisabled={false}
+                          buttonsDisabled={!!activeTableProps?.buttonsDisabled}
                         />
                       )
                       : (

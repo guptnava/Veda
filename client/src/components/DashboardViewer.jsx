@@ -51,6 +51,70 @@ const pickDefined = (...values) => {
   return undefined;
 };
 
+const extractFieldNamesFromPreview = (preview) => {
+  if (!preview || !preview.tableProps) return [];
+
+  const names = new Set();
+  const addName = (value) => {
+    if (typeof value !== 'string') return;
+    const trimmed = value.trim();
+    if (trimmed) names.add(trimmed);
+  };
+  const addFromArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (typeof item === 'string') {
+        addName(item);
+        return;
+      }
+      if (item && typeof item === 'object') {
+        addName(item.name);
+        addName(item.field);
+        addName(item.column);
+        addName(item.key);
+        addName(item.title);
+        addName(item.label);
+      }
+    });
+  };
+  const addFromObjectKeys = (obj) => {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+    Object.keys(obj).forEach(addName);
+  };
+
+  const tableProps = preview.tableProps || {};
+  const schema = tableProps.initialSchema || {};
+  addFromArray(schema.fields);
+  addFromArray(schema.headers);
+  addFromArray(schema.columns);
+  addFromObjectKeys(schema.columnTypes);
+  addFromObjectKeys(schema.fieldMap);
+  addFromObjectKeys(schema.columnsByField);
+
+  const initialState = tableProps.initialViewState || {};
+  addFromArray(initialState.headers);
+  addFromArray(initialState.columns);
+  addFromArray(initialState.fields);
+  if (initialState.schema) {
+    addFromArray(initialState.schema.fields);
+    addFromArray(initialState.schema.headers);
+    addFromObjectKeys(initialState.schema.columnTypes);
+  }
+
+  const rowsArray = Array.isArray(initialState.rows) ? initialState.rows : initialState.data;
+  if (Array.isArray(rowsArray)) {
+    const sampleRow = rowsArray.find((row) => row && typeof row === 'object' && !Array.isArray(row));
+    if (sampleRow) addFromObjectKeys(sampleRow);
+  }
+
+  if (Array.isArray(tableProps.data)) {
+    const sampleDataRow = tableProps.data.find((row) => row && typeof row === 'object' && !Array.isArray(row));
+    if (sampleDataRow) addFromObjectKeys(sampleDataRow);
+  }
+
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+};
+
 const widgetSnapshotKey = (widget = {}) => {
   if (!widget || typeof widget !== 'object' || widget.type !== 'view') return null;
   const name = (widget.viewName || widget.name || '').trim();
@@ -207,6 +271,10 @@ export default function DashboardViewer() {
   const [activeWidgetId, setActiveWidgetId] = useState(null);
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [viewSnapshots, setViewSnapshots] = useState({});
+  const [contentHeight, setContentHeight] = useState(null);
+  const rootContainerRef = useRef(null);
+  const [paletteFields, setPaletteFields] = useState([]);
+  const [paletteFieldsDataset, setPaletteFieldsDataset] = useState('');
 
   const loadGuardRef = useRef(0);
   const initializedRef = useRef(false);
@@ -218,6 +286,62 @@ export default function DashboardViewer() {
     () => widgets.map((w) => resolveWidgetPreviewProps(w, viewSnapshots)),
     [widgets, viewSnapshots],
   );
+
+  const resetPaletteFields = useCallback(() => {
+    setPaletteFields((prev) => (prev.length ? [] : prev));
+    setPaletteFieldsDataset((prev) => (prev ? '' : prev));
+  }, []);
+
+  const updatePaletteFieldsFromWidget = useCallback((widget, preview) => {
+    if (!widget) {
+      resetPaletteFields();
+      return;
+    }
+    const dataset = (widget.datasetSig || widget.dataset || '').trim();
+    const datasetLower = dataset.toLowerCase();
+    setPaletteFieldsDataset((prev) => (prev === dataset ? prev : dataset));
+    if (!dataset || datasetLower !== 'veda_dashboards') {
+      setPaletteFields((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    const fields = extractFieldNamesFromPreview(preview);
+    setPaletteFields((prev) => {
+      if (prev.length === fields.length && prev.every((name, idx) => name === fields[idx])) {
+        return prev;
+      }
+      return fields;
+    });
+  }, [resetPaletteFields]);
+
+  const handleWidgetActivate = useCallback((key, widget, preview) => {
+    setActiveWidgetId(key);
+    updatePaletteFieldsFromWidget(widget, preview);
+  }, [updatePaletteFieldsFromWidget]);
+
+  const selectWidgetByKey = useCallback((key) => {
+    if (!key) {
+      handleWidgetActivate(null, null, null);
+      return;
+    }
+    const index = widgets.findIndex((item, idx) => deriveWidgetKey(item, idx) === key);
+    if (index === -1) {
+      handleWidgetActivate(key, null, null);
+      return;
+    }
+    handleWidgetActivate(key, widgets[index], widgetPreviewProps[index]);
+  }, [handleWidgetActivate, widgets, widgetPreviewProps]);
+
+  const recomputeContentHeight = useCallback(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const rootNode = rootContainerRef.current;
+    if (!rootNode) return;
+    const footerEl = document.querySelector('footer');
+    const footerHeight = footerEl ? footerEl.getBoundingClientRect().height : 0;
+    const topOffset = rootNode.getBoundingClientRect().top;
+    const calculated = Math.max(0, window.innerHeight - footerHeight - topOffset);
+    const next = calculated > 0 ? calculated : null;
+    setContentHeight((prev) => (prev === next ? prev : next));
+  }, []);
 
   const updateDashboardQueryParam = useCallback((dashboardName) => {
     try {
@@ -241,6 +365,7 @@ export default function DashboardViewer() {
       if (loadGuardRef.current === guard) {
         setLayout(null);
         setActiveWidgetId(null);
+        resetPaletteFields();
       }
       return;
     }
@@ -264,19 +389,21 @@ export default function DashboardViewer() {
       setLayout(nextLayout);
       setViewSnapshots(snapshots);
       setActiveWidgetId(null);
+      resetPaletteFields();
       setMessage('');
     } catch (error) {
       if (loadGuardRef.current === guard) {
         console.error('Dashboard layout load failed', error);
         setLayout(null);
         setMessage('Failed to load dashboard layout');
+        resetPaletteFields();
       }
     } finally {
       if (loadGuardRef.current === guard) {
         setLoadingLayout(false);
       }
     }
-  }, []);
+  }, [resetPaletteFields]);
 
   const fetchDashboards = useCallback(async () => {
     setDashboardsLoading(true);
@@ -310,6 +437,7 @@ export default function DashboardViewer() {
       setViewSnapshots({});
       setLayout(null);
       setActiveWidgetId(null);
+      resetPaletteFields();
       const resolved = {
         name: dash.name || '',
         ownerName: dash.ownerName || dash.owner || '',
@@ -321,7 +449,7 @@ export default function DashboardViewer() {
       updateDashboardQueryParam(resolved.name);
       loadDashboardLayout(resolved.name, resolved.ownerName, guard);
     },
-    [loadDashboardLayout, updateDashboardQueryParam],
+    [loadDashboardLayout, resetPaletteFields, updateDashboardQueryParam],
   );
 
   useEffect(() => {
@@ -464,26 +592,94 @@ export default function DashboardViewer() {
     };
   }, [widgets, viewSnapshots]);
 
+  useEffect(() => {
+    if (!activeWidgetId) {
+      updatePaletteFieldsFromWidget(null, null);
+      return;
+    }
+    const index = widgets.findIndex((widget, idx) => deriveWidgetKey(widget, idx) === activeWidgetId);
+    if (index === -1) {
+      updatePaletteFieldsFromWidget(null, null);
+      return;
+    }
+    updatePaletteFieldsFromWidget(widgets[index], widgetPreviewProps[index]);
+  }, [activeWidgetId, updatePaletteFieldsFromWidget, widgets, widgetPreviewProps]);
+
   const handleDropOnCanvas = useCallback((event) => {
     event.preventDefault();
     const droppedId = event.dataTransfer.getData('text/plain');
     if (!droppedId) return;
-    setActiveWidgetId(droppedId);
+    selectWidgetByKey(droppedId);
     setDraggingWidgetId(null);
     const node = widgetRefs.current.get(droppedId);
     if (node && typeof node.scrollIntoView === 'function') {
       node.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, []);
+  }, [selectWidgetByKey]);
 
   const handleDragOverCanvas = useCallback((event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
+  useEffect(() => {
+    recomputeContentHeight();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', recomputeContentHeight);
+    }
+
+    let footerObserver = null;
+    let headerObserver = null;
+    if (typeof document !== 'undefined' && typeof ResizeObserver === 'function') {
+      const footerEl = document.querySelector('footer');
+      if (footerEl) {
+        footerObserver = new ResizeObserver(() => recomputeContentHeight());
+        footerObserver.observe(footerEl);
+      }
+      const headerEl = document.querySelector('header');
+      if (headerEl) {
+        headerObserver = new ResizeObserver(() => recomputeContentHeight());
+        headerObserver.observe(headerEl);
+      }
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', recomputeContentHeight);
+      }
+      if (footerObserver) footerObserver.disconnect();
+      if (headerObserver) headerObserver.disconnect();
+    };
+  }, [recomputeContentHeight]);
+
+  const constrainedHeightStyle = useMemo(() => {
+    if (contentHeight == null) return {};
+    const heightPx = `${contentHeight}px`;
+    return { height: heightPx, maxHeight: heightPx, minHeight: heightPx };
+  }, [contentHeight]);
+
+  const columnHeightStyle = constrainedHeightStyle;
+
+  const paletteDatasetName = useMemo(() => (paletteFieldsDataset || '').trim(), [paletteFieldsDataset]);
+  const paletteDatasetIsVeda = useMemo(
+    () => paletteDatasetName.toLowerCase() === 'veda_dashboards',
+    [paletteDatasetName],
+  );
+
   return (
     <StandaloneChrome title="Dashboard Browser">
-      <div style={{ flex: 1, display: 'flex', background: '#101216', color: '#f7f9fc', minHeight: 0 }}>
+      <div
+        ref={rootContainerRef}
+        style={{
+          flex: 1,
+          display: 'flex',
+          background: '#101216',
+          color: '#f7f9fc',
+          minHeight: 0,
+          overflow: 'hidden',
+          ...constrainedHeightStyle,
+        }}
+      >
         <div
           style={{
             width: leftCollapsed ? 56 : 320,
@@ -493,7 +689,8 @@ export default function DashboardViewer() {
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
-            overflow: 'auto',
+            overflow: 'hidden',
+            ...columnHeightStyle,
           }}
         >
           <div
@@ -611,19 +808,20 @@ export default function DashboardViewer() {
             </div>
           )}
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ padding: '6px 14px', borderBottom: '1px solid #1d2735', display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.85rem', lineHeight: 1.2 }}>{name || 'Dashboard Browser'}</div>
             {message && <div style={{ color: '#9cdcfe', fontSize: '0.72rem', lineHeight: 1.1 }}>{message}</div>}
           </div>
-          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+          <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
             <div
               onDragOver={handleDragOverCanvas}
               onDrop={handleDropOnCanvas}
               style={{
                 flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
                 padding: 16,
-                overflow: 'auto',
                 borderRight: '1px solid #1d2735',
                 background: '#0d1119',
                 transition: 'outline 0.2s ease',
@@ -651,7 +849,7 @@ export default function DashboardViewer() {
                           if (node) widgetRefs.current.set(key, node);
                           else widgetRefs.current.delete(key);
                         }}
-                        onClick={() => setActiveWidgetId(key)}
+                        onClick={() => handleWidgetActivate(key, widget, preview)}
                         style={{
                           gridColumn: `span ${Math.max(1, Math.min(12, widget.w || widget.width || 4))}`,
                           background: isActive ? '#162238' : '#131b2b',
@@ -709,7 +907,9 @@ export default function DashboardViewer() {
                 alignItems: paletteCollapsed ? 'center' : 'stretch',
                 transition: 'width 0.2s ease',
                 borderLeft: '1px solid #1d2735',
-                overflow: 'auto',
+                minHeight: 0,
+                overflow: 'hidden',
+                height: '100%',
               }}
             >
               <button
@@ -740,48 +940,88 @@ export default function DashboardViewer() {
                   <div style={{ fontSize: '0.78rem', color: '#7a8aa5' }}>
                     Drag a widget card into the layout area to spotlight it. Clicking highlights the widget in-place.
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
-                    {widgets.length === 0 && (
-                      <div style={{ fontSize: '0.8rem', color: '#7685a0' }}>Nothing to drag yet.</div>
-                    )}
-                    {widgets.map((widget, idx) => {
-                      const key = deriveWidgetKey(widget, idx);
-                      const isActive = activeWidgetId && key === activeWidgetId;
-                      return (
-                        <div
-                          key={`palette-${key}`}
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.setData('text/plain', key);
-                            event.dataTransfer.effectAllowed = 'move';
-                            setDraggingWidgetId(key);
-                          }}
-                          onDragEnd={() => setDraggingWidgetId(null)}
-                          onClick={() => setActiveWidgetId(key)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 12,
-                            padding: '10px 12px',
-                            borderRadius: 10,
-                            border: isActive ? '1px solid #3c8bff' : '1px solid #1d2735',
-                            background: isActive ? '#182539' : '#0f1726',
-                            color: '#d7e2f5',
-                            cursor: 'grab',
-                          }}
-                        >
-                          <img src={widgetGlyph} alt="Widget" style={{ width: 22, height: 22, opacity: 0.85 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#e2ebff' }}>
-                              {widget.type === 'view' ? `View: ${widget.viewName}` : humanizeKey(widget.type || `Widget ${idx + 1}`)}
-                            </div>
-                            <div style={{ fontSize: '0.75rem', color: '#8da0bd' }}>
-                              {widget.datasetSig ? `Dataset: ${widget.datasetSig}` : 'Drag to focus'}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0, width: '100%' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', flex: 1 }}>
+                      {widgets.length === 0 && (
+                        <div style={{ fontSize: '0.8rem', color: '#7685a0' }}>Nothing to drag yet.</div>
+                      )}
+                      {widgets.map((widget, idx) => {
+                        const key = deriveWidgetKey(widget, idx);
+                        const isActive = activeWidgetId && key === activeWidgetId;
+                        const preview = widgetPreviewProps[idx] || null;
+                        return (
+                          <div
+                            key={`palette-${key}`}
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.setData('text/plain', key);
+                              event.dataTransfer.effectAllowed = 'move';
+                              setDraggingWidgetId(key);
+                            }}
+                            onDragEnd={() => setDraggingWidgetId(null)}
+                            onClick={() => handleWidgetActivate(key, widget, preview)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 12,
+                              padding: '10px 12px',
+                              borderRadius: 10,
+                              border: isActive ? '1px solid #3c8bff' : '1px solid #1d2735',
+                              background: isActive ? '#182539' : '#0f1726',
+                              color: '#d7e2f5',
+                              cursor: 'grab',
+                            }}
+                          >
+                            <img src={widgetGlyph} alt="Widget" style={{ width: 22, height: 22, opacity: 0.85 }} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#e2ebff' }}>
+                                {widget.type === 'view' ? `View: ${widget.viewName}` : humanizeKey(widget.type || `Widget ${idx + 1}`)}
+                              </div>
                             </div>
                           </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ borderTop: '1px solid #1d2735', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 180, overflowY: 'auto', flexShrink: 0 }}>
+                      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#dce6f8' }}>
+                        {paletteDatasetName ? `${paletteDatasetName} Fields` : 'Dataset Fields'}
+                      </div>
+                      {!paletteDatasetName && (
+                        <div style={{ fontSize: '0.75rem', color: '#7a8aa5', lineHeight: 1.4 }}>
+                          Click a view to preview its available fields.
                         </div>
-                      );
-                    })}
+                      )}
+                      {paletteDatasetName && !paletteDatasetIsVeda && (
+                        <div style={{ fontSize: '0.75rem', color: '#7a8aa5', lineHeight: 1.4 }}>
+                          Fields list is available only for the VEDA_DASHBOARDS dataset. Selected dataset: {paletteDatasetName}.
+                        </div>
+                      )}
+                      {paletteDatasetIsVeda && paletteFields.length === 0 && (
+                        <div style={{ fontSize: '0.75rem', color: '#7a8aa5', lineHeight: 1.4 }}>
+                          No fields available yet for VEDA_DASHBOARDS.
+                        </div>
+                      )}
+                      {paletteDatasetIsVeda && paletteFields.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {paletteFields.map((field) => (
+                            <span
+                              key={field}
+                              style={{
+                                padding: '4px 6px',
+                                borderRadius: 6,
+                                border: '1px solid #1d2735',
+                                background: '#162238',
+                                color: '#c7d3e8',
+                                fontSize: '0.72rem',
+                                letterSpacing: '0.01em',
+                              }}
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </>
               )}
