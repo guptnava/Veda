@@ -45,6 +45,7 @@ import borderIcon from '../icons/border.svg';
 import fontIcon from '../icons/font.svg';
 import fillIcon from '../icons/fill.svg';
 import shadingIcon from '../icons/shading.svg';
+import worksheetIcon from '../icons/worksheet_viewer.svg';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 const GRID_COLUMNS = 12;
@@ -122,16 +123,16 @@ export default function TableauStyleDashboard() {
   const [showDateMenu, setShowDateMenu] = useState(false);
   const [savePanelAlignment, setSavePanelAlignment] = useState('right');
   const [widgetGroupsCollapsed, setWidgetGroupsCollapsed] = useState({
-    charts: false,
-    nav: false,
-    control: false,
-    display: false,
+    charts: true,
+    nav: true,
+    control: true,
+    display: true,
   });
+  const [objectsCollapsed, setObjectsCollapsed] = useState(true);
   const [csvEntries, setCsvEntries] = useState([]);
   const [csvLoading, setCsvLoading] = useState(false);
   const [csvError, setCsvError] = useState('');
-  const [csvCollapsed, setCsvCollapsed] = useState(false);
-  const [objectsCollapsed, setObjectsCollapsed] = useState(false);
+  const [csvWidgetCollapsed, setCsvWidgetCollapsed] = useState(true);
   const chartTypeLabelMap = useMemo(() => {
     const map = Object.create(null);
     CHART_DEFINITIONS.forEach(entry => { map[entry.type] = entry.label; });
@@ -163,12 +164,11 @@ export default function TableauStyleDashboard() {
     borderSize: '1',
     borderColor: palette.border,
     fillColor: palette.panel,
-    shading: '#00000000',
+    shading: '#000000',
     textAlign: 'left',
     numberFormat: 'general',
     dateFormat: 'shortDate',
   });
-  const isMountedRef = useRef(true);
 
   // Fetch saved views
   useEffect(() => {
@@ -188,6 +188,41 @@ export default function TableauStyleDashboard() {
     };
     load();
   }, []);
+
+  const loadCsvEntries = useCallback(async (isCancelled = () => false) => {
+    if (isCancelled()) return;
+    setCsvLoading(true);
+    setCsvError('');
+    try {
+      const res = await fetch('/api/table/csv_entries');
+      const ct = res.headers.get('content-type') || '';
+      const payload = ct.includes('application/json') ? await res.json() : await res.text();
+      if (isCancelled()) return;
+      if (!res.ok) {
+        const errMsg = (payload && payload.error) || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(errMsg);
+      }
+      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+      if (!isCancelled()) {
+        setCsvEntries(entries);
+        setCsvError('');
+      }
+    } catch (e) {
+      console.error('csv_entries load failed', e);
+      if (!isCancelled()) {
+        setCsvEntries([]);
+        setCsvError(e?.message || 'Failed to load CSV uploads');
+      }
+    } finally {
+      if (!isCancelled()) setCsvLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadCsvEntries(() => cancelled);
+    return () => { cancelled = true; };
+  }, [loadCsvEntries]);
 
   // Drag from left panel
   const onDragStartView = (e, v) => {
@@ -260,6 +295,23 @@ export default function TableauStyleDashboard() {
   const onDragStartDisplay = (e, displayType) => {
     try {
       const payload = JSON.stringify({ kind: 'display', displayType });
+      e.dataTransfer.setData('application/json', payload);
+      e.dataTransfer.setData('text/plain', payload);
+      e.dataTransfer.effectAllowed = 'copy';
+    } catch {}
+  };
+
+  const onDragStartCsv = (e, entry) => {
+    if (!entry) return;
+    try {
+      const entryId = entry.id != null ? String(entry.id) : String(entry.entryId || '');
+      if (!entryId) return;
+      const payload = JSON.stringify({
+        kind: 'csv',
+        entryId,
+        entryName: deriveCsvEntryName(entry, entryId),
+        entryMeta: entry,
+      });
       e.dataTransfer.setData('application/json', payload);
       e.dataTransfer.setData('text/plain', payload);
       e.dataTransfer.effectAllowed = 'copy';
@@ -377,62 +429,29 @@ export default function TableauStyleDashboard() {
     );
   };
 
-  const deriveCsvEntryName = (entry) => {
-    if (!entry || typeof entry !== 'object') return 'CSV';
-    const primary = [entry.fileName, entry.originalName, entry.name]
-      .map((value) => (typeof value === 'string' ? value.trim() : ''))
-      .find((value) => value.length);
-    if (primary && primary.length) return primary;
-    if (entry.id != null) return `CSV ${entry.id}`;
+  const deriveCsvEntryName = (entry, fallbackId = null) => {
+    if (entry && typeof entry === 'object') {
+      const candidates = [entry.originalName, entry.fileName, entry.name]
+        .map(v => (typeof v === 'string' ? v.trim() : ''))
+        .filter(Boolean);
+      if (candidates.length) return candidates[0];
+      const id = entry.id != null ? String(entry.id).trim() : '';
+      if (id) return `CSV ${id}`;
+    }
+    if (fallbackId != null) {
+      const idStr = String(fallbackId).trim();
+      if (idStr) return `CSV ${idStr}`;
+    }
     return 'CSV Entry';
   };
 
-  const refreshCsvEntries = useCallback(async ({ signal } = {}) => {
-    if (!isMountedRef.current) return;
-    setCsvLoading(true);
-    setCsvError('');
-    try {
-      const fetchOptions = signal ? { signal } : {};
-      const res = await fetch('/api/table/csv_entries', fetchOptions);
-      const ct = res.headers.get('content-type') || '';
-      const payload = ct.includes('application/json') ? await res.json() : await res.text();
-      if (!res.ok) {
-        const message = (payload && payload.error)
-          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
-        throw new Error(message);
-      }
-      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-      if (!isMountedRef.current) return;
-      setCsvEntries(entries);
-    } catch (err) {
-      if (signal?.aborted) return;
-      if (!isMountedRef.current) return;
-      console.error('csv entries fetch failed', err);
-      setCsvError(err?.message || 'Failed to load CSV entries');
-      setCsvEntries([]);
-    } finally {
-      if (!isMountedRef.current) return;
-      setCsvLoading(false);
-    }
-  }, []);
-
-  const handleCsvDragStart = useCallback((event, entry) => {
-    if (!event?.dataTransfer || !entry?.id) return;
-    try {
-      const payload = JSON.stringify({ kind: 'csv-entry', entry: { id: entry.id } });
-      event.dataTransfer.effectAllowed = 'copy';
-      event.dataTransfer.setData('application/json', payload);
-      event.dataTransfer.setData('text/plain', payload);
-    } catch (err) {
-      console.warn('csv drag start failed', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void refreshCsvEntries({ signal: controller.signal });
-    return () => controller.abort();
-  }, [refreshCsvEntries]);
+  const isCsvPayload = (payload) => {
+    if (!payload || typeof payload !== 'object') return false;
+    if (payload.kind !== 'csv' && payload.kind !== 'csv-entry') return false;
+    if (payload.entryId != null && String(payload.entryId).trim()) return true;
+    if (payload.entry && payload.entry.id != null && String(payload.entry.id).trim()) return true;
+    return false;
+  };
 
   const handleSaveButtonToggle = () => {
     if (showSavePanel) {
@@ -521,20 +540,6 @@ export default function TableauStyleDashboard() {
         config: payload.config && typeof payload.config === 'object' ? payload.config : null,
       };
     }
-    if (payload.kind === 'csv-entry') {
-      const entryId = payload?.entry?.id ?? payload?.id ?? null;
-      const title = deriveCsvEntryName(payload.entry || payload);
-      return {
-        id,
-        type: 'csv',
-        entryId,
-        title,
-        loading: entryId != null,
-        error: entryId != null ? '' : 'CSV entry missing identifier.',
-        tableProps: null,
-        entryMeta: payload.entry || null,
-      };
-    }
     if (payload.kind === 'saved-view' && payload.viewName) {
       return {
         id,
@@ -544,81 +549,30 @@ export default function TableauStyleDashboard() {
         viewContent: payload.content || null,
       };
     }
+    if (payload.kind === 'csv' || payload.kind === 'csv-entry') {
+      const sourceId = payload.entryId != null ? payload.entryId : (payload.entry && payload.entry.id != null ? payload.entry.id : null);
+      const rawId = sourceId != null ? String(sourceId).trim() : '';
+      if (!rawId) return null;
+      const entryMeta = payload.entryMeta && typeof payload.entryMeta === 'object'
+        ? payload.entryMeta
+        : (payload.entry && typeof payload.entry === 'object' ? payload.entry : null);
+      const label = typeof payload.entryName === 'string' ? payload.entryName.trim() : deriveCsvEntryName(entryMeta, rawId);
+      return {
+        id,
+        type: 'csv',
+        entryId: rawId,
+        entryName: label || `CSV ${rawId}`,
+        loading: true,
+        error: null,
+        tableHeaders: [],
+        tableData: [],
+        totalRows: 0,
+        entryMeta,
+        lastLoadedAt: null,
+      };
+    }
     return null;
   };
-
-  const hydrateCsvWidget = useCallback(async (widgetId, entryId, parentId = null) => {
-    const applyCsvUpdate = (mutator) => {
-      setWidgets(prev => {
-        if (!isMountedRef.current) return prev;
-        if (parentId) {
-          const container = prev[parentId];
-          if (!container || container.type !== 'container') return prev;
-          const currentChild = (container.childWidgets || {})[widgetId];
-          if (!currentChild || currentChild.type !== 'csv') return prev;
-          const nextChild = mutator(currentChild);
-          if (!nextChild) return prev;
-          const nextChildWidgets = { ...(container.childWidgets || {}), [widgetId]: nextChild };
-          return { ...prev, [parentId]: { ...container, childWidgets: nextChildWidgets } };
-        }
-        const current = prev[widgetId];
-        if (!current || current.type !== 'csv') return prev;
-        const nextMeta = mutator(current);
-        if (!nextMeta) return prev;
-        return { ...prev, [widgetId]: nextMeta };
-      });
-    };
-
-    if (entryId == null) {
-      applyCsvUpdate((meta) => ({ ...meta, loading: false, error: 'CSV entry missing identifier.' }));
-      return;
-    }
-
-    applyCsvUpdate((meta) => ({ ...meta, entryId, loading: true, error: '' }));
-
-    try {
-      const res = await fetch(`/api/table/csv_entries/${entryId}/load`);
-      const ct = res.headers.get('content-type') || '';
-      const payload = ct.includes('application/json') ? await res.json() : await res.text();
-      if (!res.ok) {
-        const message = (payload && payload.error)
-          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
-        throw new Error(message);
-      }
-      const entryMeta = payload?.entry || null;
-      const table = payload?.table || {};
-      const tableData = Array.isArray(table?.data) ? table.data : [];
-      const tableHeaders = Array.isArray(table?.headers) ? table.headers : [];
-      const total = typeof table?.totalRows === 'number' ? table.totalRows : tableData.length;
-      const tableProps = {
-        data: tableData,
-        headers: tableHeaders,
-        totalRows: total,
-        serverMode: false,
-        disableViewPersistence: true,
-        tableOpsMode: 'csv-import',
-        pushDownDb: false,
-      };
-      if (!isMountedRef.current) return;
-      applyCsvUpdate((meta) => ({
-        ...meta,
-        entryId,
-        entryMeta,
-        tableProps,
-        loading: false,
-        error: '',
-        title: meta.title || deriveCsvEntryName(entryMeta || { id: entryId }),
-      }));
-    } catch (err) {
-      if (!isMountedRef.current) return;
-      console.error('csv widget load failed', err);
-      applyCsvUpdate((meta) => ({
-        ...meta,
-        loading: false,
-        error: err?.message || 'Failed to load CSV data.',
-      }));
-    }
-  }, [setWidgets]);
 
   const normalizeChildLayout = (entries, orientation) => {
     if (!Array.isArray(entries) || !entries.length) return [];
@@ -652,6 +606,81 @@ export default function TableauStyleDashboard() {
     return entries.slice();
   };
 
+  const loadCsvDataForWidget = async (widgetId, entryId, parentId = null) => {
+    const effectiveId = entryId != null ? String(entryId).trim() : '';
+    if (!effectiveId) return;
+
+    const updateMeta = (updater) => {
+      setWidgets(prev => {
+        if (parentId) {
+          const container = prev[parentId];
+          if (!container || container.type !== 'container') return prev;
+          const childWidgets = { ...(container.childWidgets || {}) };
+          const target = childWidgets[widgetId];
+          if (!target || target.type !== 'csv') return prev;
+          const nextChild = updater(target);
+          if (!nextChild) return prev;
+          childWidgets[widgetId] = nextChild;
+          return { ...prev, [parentId]: { ...container, childWidgets } };
+        }
+        const meta = prev[widgetId];
+        if (!meta || meta.type !== 'csv') return prev;
+        const nextMeta = updater(meta);
+        if (!nextMeta) return prev;
+        return { ...prev, [widgetId]: nextMeta };
+      });
+    };
+
+    updateMeta(meta => ({ ...meta, loading: true, error: null }));
+    try {
+      const res = await fetch(`/api/table/csv_entries/${encodeURIComponent(effectiveId)}/load`);
+      const ct = res.headers.get('content-type') || '';
+      const payload = ct.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const errMsg = (payload && payload.error) || (typeof payload === 'string' ? payload : `Failed to load CSV ${effectiveId}`);
+        throw new Error(errMsg);
+      }
+
+      const entry = payload?.entry || null;
+      const table = payload?.table || {};
+      let headers = Array.isArray(table?.headers) ? table.headers.filter(Boolean) : [];
+      let rows = Array.isArray(table?.data) ? table.data : [];
+
+      if (!headers.length && rows.length && typeof rows[0] === 'object' && rows[0] !== null && !Array.isArray(rows[0])) {
+        headers = Object.keys(rows[0]);
+      }
+      if (rows.length && Array.isArray(rows[0])) {
+        const effectiveHeaders = headers.length ? headers : rows[0].map((_, idx) => `column_${idx + 1}`);
+        rows = rows.map(record => {
+          const obj = {};
+          effectiveHeaders.forEach((h, idx) => {
+            obj[h] = idx < record.length ? record[idx] : '';
+          });
+          return obj;
+        });
+        headers = effectiveHeaders;
+      }
+
+      const totalRows = Number.isFinite(table?.totalRows) ? table.totalRows : rows.length;
+      const fallbackName = deriveCsvEntryName(entry, effectiveId);
+
+      updateMeta(meta => ({
+        ...meta,
+        loading: false,
+        error: null,
+        entryMeta: entry || meta.entryMeta || null,
+        entryName: fallbackName || meta.entryName || `CSV ${effectiveId}`,
+        tableHeaders: headers,
+        tableData: rows,
+        totalRows,
+        lastLoadedAt: Date.now(),
+      }));
+    } catch (err) {
+      const message = err?.message || 'Failed to load CSV data';
+      updateMeta(meta => ({ ...meta, loading: false, error: message }));
+    }
+  };
+
   // Drop onto grid
   const addWidgetAt = (vx, vy, view) => {
     const id = String(Date.now() + Math.random());
@@ -663,9 +692,8 @@ export default function TableauStyleDashboard() {
       [id]: meta,
     }));
     setLayout(prev => [...prev, { i: id, x: vx ?? 0, y: vy ?? Infinity, w, h }]);
-    if (view?.kind === 'csv-entry') {
-      const entryId = view?.entry?.id ?? view?.id ?? null;
-      void hydrateCsvWidget(id, entryId);
+    if (meta.type === 'csv') {
+      loadCsvDataForWidget(id, meta.entryId);
     }
   };
 
@@ -689,9 +717,8 @@ export default function TableauStyleDashboard() {
       const childWidgets = { ...(meta.childWidgets || {}), [childId]: childMeta };
       return { ...prev, [containerId]: { ...meta, childLayout, childWidgets } };
     });
-    if (view?.kind === 'csv-entry') {
-      const entryId = view?.entry?.id ?? view?.id ?? null;
-      void hydrateCsvWidget(childId, entryId, containerId);
+    if (childMeta.type === 'csv') {
+      loadCsvDataForWidget(childId, childMeta.entryId, containerId);
     }
   };
 
@@ -774,8 +801,6 @@ export default function TableauStyleDashboard() {
       document.removeEventListener('keyup', onKey);
     };
   }, [showSavePanel]);
-
-  useEffect(() => () => { isMountedRef.current = false; }, []);
 
   useLayoutEffect(() => {
     // Keep the save panel inside the viewport even when the toolbar is near an edge.
@@ -906,6 +931,56 @@ export default function TableauStyleDashboard() {
     </div>
   );
 
+  const renderCsvWidgetBody = (csvMeta, widgetId, parentId = null) => {
+    if (!csvMeta) return null;
+    const retry = () => loadCsvDataForWidget(widgetId, csvMeta.entryId, parentId);
+    if (csvMeta.loading) {
+      return <div style={{ color: palette.textMuted }}>Loading CSV…</div>;
+    }
+    if (csvMeta.error) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ color: palette.textMuted }}>{csvMeta.error}</div>
+          <button
+            type="button"
+            onClick={retry}
+            style={{
+              alignSelf: 'flex-start',
+              padding: '4px 8px',
+              borderRadius: 6,
+              border: `1px solid ${palette.border}`,
+              background: palette.panelMuted,
+              color: palette.textPrimary,
+              cursor: 'pointer',
+              fontSize: '12px',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    const data = Array.isArray(csvMeta.tableData) ? csvMeta.tableData : [];
+    const headers = Array.isArray(csvMeta.tableHeaders) ? csvMeta.tableHeaders : [];
+
+    if (!data.length && !headers.length) {
+      return <div style={{ color: palette.textMuted }}>No rows available in this CSV.</div>;
+    }
+
+    const schema = headers.length ? { headers } : undefined;
+
+    return (
+      <TableComponent
+        data={data}
+        initialPageSize={10}
+        initialFontSize={11}
+        dashboardMode={true}
+        initialSchema={schema}
+      />
+    );
+  };
+
   const formatButtonBaseStyle = {
     width: 28,
     height: 28,
@@ -958,7 +1033,7 @@ export default function TableauStyleDashboard() {
       if (data && data.kind === 'saved-view' && data.viewName) {
         dropGuardRef.current = Date.now();
         addWidgetAt(layoutItem?.x, layoutItem?.y, data);
-      } else if (data && (data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || data.kind === 'csv-entry')) {
+      } else if (data && (data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || isCsvPayload(data))) {
         dropGuardRef.current = Date.now();
         addWidgetAt(layoutItem?.x, layoutItem?.y, data);
       } else if (data && data.kind === 'container' && (data.orientation === 'h' || data.orientation === 'v')) {
@@ -1032,8 +1107,9 @@ export default function TableauStyleDashboard() {
           if (meta.config) widget.config = meta.config;
         }
         if (meta.type === 'csv') {
+          widget.entryId = meta.entryId;
           widget.csvEntryId = meta.entryId;
-          if (meta.title) widget.title = meta.title;
+          if (meta.entryName) widget.entryName = meta.entryName;
         }
         return widget;
       });
@@ -1097,7 +1173,7 @@ export default function TableauStyleDashboard() {
       const txt = e?.dataTransfer?.getData('application/json') || e?.dataTransfer?.getData('text/plain');
       if (!txt) return;
       const data = JSON.parse(txt);
-      if (!(data && (data.kind === 'saved-view' || data.kind === 'container' || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || data.kind === 'csv-entry'))) return;
+      if (!(data && (data.kind === 'saved-view' || data.kind === 'container' || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || isCsvPayload(data)))) return;
       const rect = gridContainerRef.current?.getBoundingClientRect();
       if (!rect) { addWidgetAt(0, Infinity, data); return; }
       const scrollLeft = gridContainerRef.current?.scrollLeft || 0;
@@ -1725,8 +1801,7 @@ export default function TableauStyleDashboard() {
             </div>
           </div>
 
-          {/* 3) Objects */}
-          {/* 2.5) CSV Tables */}
+          {/* CSV Widget */}
           <div
             style={{
               border: `1px solid ${palette.border}`,
@@ -1741,8 +1816,8 @@ export default function TableauStyleDashboard() {
           >
             <button
               type="button"
-              onClick={() => setCsvCollapsed(prev => !prev)}
-              aria-expanded={!csvCollapsed}
+              onClick={() => setCsvWidgetCollapsed(prev => !prev)}
+              aria-expanded={!csvWidgetCollapsed}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1760,18 +1835,18 @@ export default function TableauStyleDashboard() {
                 letterSpacing: 0.3,
               }}
             >
-              <span>CSV Tables</span>
-              <span aria-hidden="true" style={{ fontSize: '12px' }}>{csvCollapsed ? '▶' : '▼'}</span>
+              <span>CSV Widget</span>
+              <span aria-hidden="true" style={{ fontSize: '12px' }}>{csvWidgetCollapsed ? '▶' : '▼'}</span>
             </button>
-            {!csvCollapsed && (
+            {!csvWidgetCollapsed && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ fontSize: '0.72rem', color: palette.textMuted, lineHeight: 1.3 }}>
-                    Drag an entry to drop a CSV table widget on the canvas.
+                    Drag a CSV entry to drop a table widget on the canvas.
                   </div>
                   <button
                     type="button"
-                    onClick={() => { void refreshCsvEntries(); }}
+                    onClick={() => { void loadCsvEntries(); }}
                     disabled={csvLoading}
                     style={{
                       padding: '4px 8px',
@@ -1786,34 +1861,25 @@ export default function TableauStyleDashboard() {
                     {csvLoading ? 'Refreshing…' : 'Refresh'}
                   </button>
                 </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                    maxHeight: 200,
-                    overflowY: 'auto',
-                    paddingRight: 2,
-                  }}
-                >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto', paddingRight: 2 }}>
                   {csvLoading ? (
                     <div style={{ fontSize: '0.78rem', color: palette.textMuted }}>Loading CSV entries…</div>
                   ) : csvError ? (
                     <div style={{ fontSize: '0.78rem', color: '#ff8686' }}>{csvError}</div>
-                  ) : csvEntries.length ? (
-                    csvEntries.map((entry) => {
+                  ) : (csvEntries && csvEntries.length) ? (
+                    csvEntries.map(entry => {
                       if (!entry) return null;
-                      const name = deriveCsvEntryName(entry);
-                      const descriptor = (entry.storedPath && typeof entry.storedPath === 'string' && entry.storedPath.trim())
-                        || (entry.createdAt && typeof entry.createdAt === 'string' && entry.createdAt.trim())
+                      const label = deriveCsvEntryName(entry, entry?.id ?? entry?.entryId);
+                      const descriptor = (entry?.storedPath && typeof entry.storedPath === 'string' && entry.storedPath.trim())
+                        || (entry?.createdAt && typeof entry.createdAt === 'string' && entry.createdAt.trim())
                         || '';
                       return (
                         <button
                           type="button"
-                          key={`csv-entry-${entry.id}`}
+                          key={`csv-entry-${entry?.id ?? label}`}
                           draggable
-                          onDragStart={(event) => handleCsvDragStart(event, entry)}
-                          title={`Drag ${name} to the layout`}
+                          onDragStart={(e) => onDragStartCsv(e, entry)}
+                          title={`Drag ${label} to layout`}
                           style={{
                             display: 'flex',
                             flexDirection: 'column',
@@ -1827,15 +1893,18 @@ export default function TableauStyleDashboard() {
                             cursor: 'grab',
                           }}
                         >
-                          <span style={{ fontWeight: 600, fontSize: '12px', lineHeight: 1.2 }}>{name}</span>
-                          {descriptor ? (
-                            <span style={{ fontSize: '11px', color: palette.textMuted, lineHeight: 1.2 }}>{descriptor}</span>
-                          ) : null}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '12px', lineHeight: 1.2 }}>
+                            <img src={worksheetIcon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9 }} />
+                            {label}
+                          </span>
+                          {descriptor && (
+                            <span style={{ fontSize: '0.7rem', color: palette.textMuted, lineHeight: 1.2 }}>{descriptor}</span>
+                          )}
                         </button>
                       );
                     })
                   ) : (
-                    <div style={{ fontSize: '0.78rem', color: palette.textMuted }}>No CSV entries available.</div>
+                    <div style={{ fontSize: '0.78rem', color: palette.textMuted }}>No CSV uploads available.</div>
                   )}
                 </div>
               </>
@@ -1844,93 +1913,120 @@ export default function TableauStyleDashboard() {
 
           {/* 3) Objects */}
           <div style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: 8, background: palette.panel }}>
-            <div style={{ color: palette.textPrimary, fontWeight: 600, marginBottom: 6, fontSize: '0.8rem', letterSpacing: '0.02em' }}>Objects</div>
-            <div
+            <button
+              type="button"
+              onClick={() => setObjectsCollapsed(prev => !prev)}
+              aria-expanded={!objectsCollapsed}
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-                gap: 6,
-                marginTop: 4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                width: '100%',
+                padding: '6px 8px',
+                borderRadius: 6,
+                border: `1px solid ${palette.border}`,
+                background: 'rgba(32,32,32,0.6)',
+                color: palette.textPrimary,
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '12px',
+                letterSpacing: 0.3,
               }}
             >
-              {baseObjectItems.map(item => (
+              <span>Objects</span>
+              <span aria-hidden="true" style={{ fontSize: '12px' }}>{objectsCollapsed ? '▶' : '▼'}</span>
+            </button>
+            {!objectsCollapsed && (
+              <>
                 <div
-                  key={item.key}
-                  draggable
-                  onDragStart={item.onDragStart}
-                  title={`Drag ${item.label.toLowerCase()}`}
-                  className="object-item"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
                     gap: 6,
-                    padding: 6,
-                    border: `1px solid ${palette.border}`,
-                    borderRadius: 6,
-                    background: 'rgba(36,36,36,0.6)',
-                    cursor: 'grab',
+                    marginTop: 8,
                   }}
                 >
-                  <img src={item.icon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9 }} />
-                  <span style={{ color: palette.textPrimary, lineHeight: 1.2, fontSize: '12px' }}>{item.label}</span>
-                </div>
-              ))}
-            </div>
-            {renderWidgetGroup(
-              'charts',
-              'Data Visualizations',
-              CHART_DEFINITIONS,
-              onDragStartChart,
-              {
-                extraItems: [
-                  { type: 'map', label: 'Map Widget', icon: mapWidgetIcon, onDragStart: (e) => onDragStartDisplay(e, 'map') },
-                ],
-                renderItem: (item, handleDrag) => (
-                  <div
-                    key={item.type}
-                    draggable
-                    onDragStart={handleDrag}
-                    title={item.label}
-                    className="object-item"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: 2,
-                      marginRight: 4,
-                      border: `1px solid ${palette.border}`,
-                      borderRadius: 8,
-                      background: 'rgba(36,36,36,0.65)',
-                      cursor: 'grab',
-                    }}
-                  >
+                  {baseObjectItems.map(item => (
                     <div
+                      key={item.key}
+                      draggable
+                      onDragStart={item.onDragStart}
+                      title={`Drag ${item.label.toLowerCase()}`}
+                      className="object-item"
                       style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: '50%',
-                        background: 'rgba(20,20,20,0.92)',
-                        border: `1px solid ${palette.border}`,
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
+                        gap: 6,
+                        padding: 6,
+                        border: `1px solid ${palette.border}`,
+                        borderRadius: 6,
+                        background: 'rgba(36,36,36,0.6)',
+                        cursor: 'grab',
                       }}
                     >
-                      <img src={item.icon} alt="" aria-hidden="true" style={{ width: 20, height: 20, opacity: 0.95 }} />
+                      <img src={item.icon} alt="" aria-hidden="true" style={{ width: 14, height: 14, opacity: 0.9 }} />
+                      <span style={{ color: palette.textPrimary, lineHeight: 1.2, fontSize: '12px' }}>{item.label}</span>
                     </div>
-                  </div>
-                ),
-                customGridStyle: {
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: 4,
-                },
-              }
+                  ))}
+                </div>
+                {renderWidgetGroup(
+                  'charts',
+                  'Data Visualizations',
+                  CHART_DEFINITIONS,
+                  onDragStartChart,
+                  {
+                    extraItems: [
+                      { type: 'map', label: 'Map Widget', icon: mapWidgetIcon, onDragStart: (e) => onDragStartDisplay(e, 'map') },
+                    ],
+                    renderItem: (item, handleDrag) => (
+                      <div
+                        key={item.type}
+                        draggable
+                        onDragStart={handleDrag}
+                        title={item.label}
+                        className="object-item"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 2,
+                          marginRight: 4,
+                          border: `1px solid ${palette.border}`,
+                          borderRadius: 8,
+                          background: 'rgba(36,36,36,0.65)',
+                          cursor: 'grab',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: '50%',
+                            background: 'rgba(20,20,20,0.92)',
+                            border: `1px solid ${palette.border}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <img src={item.icon} alt="" aria-hidden="true" style={{ width: 20, height: 20, opacity: 0.95 }} />
+                        </div>
+                      </div>
+                    ),
+                    customGridStyle: {
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: 4,
+                    },
+                  }
+                )}
+                {renderWidgetGroup('nav', 'Navigation & Layout', NAV_WIDGET_DEFINITIONS, onDragStartNavWidget)}
+                {renderWidgetGroup('control', 'Interactive Controls', CONTROL_WIDGET_DEFINITIONS, onDragStartControl)}
+                {renderWidgetGroup('display', 'Data Display', DISPLAY_WIDGET_DEFINITIONS, onDragStartDisplay)}
+              </>
             )}
-            {renderWidgetGroup('nav', 'Navigation & Layout', NAV_WIDGET_DEFINITIONS, onDragStartNavWidget)}
-            {renderWidgetGroup('control', 'Interactive Controls', CONTROL_WIDGET_DEFINITIONS, onDragStartControl)}
-            {renderWidgetGroup('display', 'Data Display', DISPLAY_WIDGET_DEFINITIONS, onDragStartDisplay)}
           </div>
         </div>
 
@@ -1997,7 +2093,7 @@ export default function TableauStyleDashboard() {
                           const txt = e?.dataTransfer?.getData('application/json') || e?.dataTransfer?.getData('text/plain');
                           if (!txt) return;
                           const data = JSON.parse(txt);
-                          if (!(data && ((data.kind === 'saved-view' && data.viewName) || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || data.kind === 'csv-entry'))) return;
+                          if (!(data && ((data.kind === 'saved-view' && data.viewName) || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || isCsvPayload(data)))) return;
                           // Rough position mapping for fallback
                           const rect = e.currentTarget.getBoundingClientRect();
                           const pxX = e.clientX - rect.left + e.currentTarget.scrollLeft - 6;
@@ -2036,7 +2132,7 @@ export default function TableauStyleDashboard() {
                             const txt = e?.dataTransfer?.getData('application/json') || e?.dataTransfer?.getData('text/plain');
                             if (!txt) return;
                             const data = JSON.parse(txt);
-                            if (data && ((data.kind === 'saved-view' && data.viewName) || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || data.kind === 'csv-entry')) {
+                            if (data && ((data.kind === 'saved-view' && data.viewName) || data.kind === 'text' || data.kind === 'image' || data.kind === 'chart' || data.kind === 'nav' || data.kind === 'control' || data.kind === 'display' || isCsvPayload(data))) {
                               dropGuardRef.current = Date.now();
                               const x = li?.x ?? 0; const y = li?.y ?? Infinity;
                               addChildToContainer(item.i, x, y, data);
@@ -2073,11 +2169,11 @@ export default function TableauStyleDashboard() {
                                 ? (navWidgetLabelMap[childMeta?.navType] || 'Navigation')
                                 : childMeta?.type === 'control'
                                   ? (controlWidgetLabelMap[childMeta?.controlType] || 'Control')
-                                : childMeta?.type === 'display'
-                                  ? (displayWidgetLabelMap[childMeta?.displayType] || 'Data Display')
-                                : childMeta?.type === 'csv'
-                                  ? (childMeta?.title || deriveCsvEntryName(childMeta?.entryMeta || { id: childMeta?.entryId }))
-                                : childMeta?.viewName || 'View';
+                              : childMeta?.type === 'display'
+                                ? (displayWidgetLabelMap[childMeta?.displayType] || 'Data Display')
+                              : childMeta?.type === 'csv'
+                                ? (childMeta?.entryName || (childMeta?.entryId ? `CSV ${childMeta.entryId}` : 'CSV File'))
+                              : childMeta?.viewName || 'View';
                             return (
                               <div key={ci.i} style={{ background: palette.panel, border: `1px solid ${palette.border}`, borderRadius: 4, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                                 <div className="child-widget-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px', borderBottom: `1px solid ${palette.border}`, cursor: 'grab' }}>
@@ -2124,27 +2220,14 @@ export default function TableauStyleDashboard() {
                                     ) : (
                                       <>Saved view: <strong>{childMeta?.viewName}</strong> (no preview config).</>
                                     )
-                                  ) : childMeta?.type === 'csv' ? (
-                                    childMeta?.loading ? (
-                                      <div style={{ color: palette.textMuted, fontSize: '0.85rem' }}>Loading CSV entry…</div>
-                                    ) : childMeta?.error ? (
-                                      <div style={{ color: '#ff8686', fontSize: '0.85rem' }}>{childMeta.error}</div>
-                                    ) : childMeta?.tableProps ? (
-                                      <TableComponent
-                                        {...childMeta.tableProps}
-                                        dashboardMode={true}
-                                        showMaximizeControl={false}
-                                        buttonsDisabled={false}
-                                      />
-                                    ) : (
-                                      <div style={{ color: palette.textMuted, fontSize: '0.85rem' }}>CSV preview unavailable.</div>
-                                    )
                                   ) : childMeta?.type === 'text' ? (
                                     <textarea
                                       value={childMeta?.text || ''}
                                       onChange={(e) => updateTextWidget(ci.i, e.target.value, item.i)}
                                       style={{ width: '100%', minHeight: 80, background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px', resize: 'vertical' }}
                                     />
+                                  ) : childMeta?.type === 'csv' ? (
+                                    renderCsvWidgetBody(childMeta, ci.i, item.i)
                                   ) : childMeta?.type === 'display' ? (
                                     renderDisplayPlaceholder(childMeta?.displayType)
                                   ) : childMeta?.type === 'control' ? (
@@ -2209,7 +2292,7 @@ export default function TableauStyleDashboard() {
                         : meta?.type === 'display'
                           ? (displayWidgetLabelMap[meta?.displayType] || 'Data Display')
                         : meta?.type === 'csv'
-                          ? (meta?.title || deriveCsvEntryName(meta?.entryMeta || { id: meta?.entryId }))
+                          ? (meta?.entryName || (meta?.entryId ? `CSV ${meta.entryId}` : 'CSV File'))
                         : meta?.viewName || 'Widget'}
                     </div>
                     <button type="button" onClick={() => removeWidget(item.i)} title="Close" aria-label="Close" style={{ background: 'transparent', border: 'none', padding: 4, cursor: 'pointer' }}>
@@ -2238,27 +2321,14 @@ export default function TableauStyleDashboard() {
                           Saved view: <strong>{meta?.viewName}</strong> (no preview config). Resize freely; content scrolls.
                         </div>
                       )
-                    ) : meta?.type === 'csv' ? (
-                      meta?.loading ? (
-                        <div style={{ color: palette.textMuted, fontSize: '0.9rem' }}>Loading CSV entry…</div>
-                      ) : meta?.error ? (
-                        <div style={{ color: '#ff8686', fontSize: '0.9rem' }}>{meta.error}</div>
-                      ) : meta?.tableProps ? (
-                        <TableComponent
-                          {...meta.tableProps}
-                          dashboardMode={true}
-                          showMaximizeControl={false}
-                          buttonsDisabled={false}
-                        />
-                      ) : (
-                        <div style={{ color: palette.textMuted, fontSize: '0.9rem' }}>CSV preview unavailable.</div>
-                      )
                     ) : meta?.type === 'text' ? (
                       <textarea
                         value={meta?.text || ''}
                         onChange={(e) => updateTextWidget(item.i, e.target.value)}
                         style={{ width: '100%', minHeight: 120, background: palette.panelMuted, color: palette.textPrimary, border: `1px solid ${palette.border}`, borderRadius: 4, padding: '6px', resize: 'vertical' }}
                       />
+                    ) : meta?.type === 'csv' ? (
+                      renderCsvWidgetBody(meta, item.i)
                     ) : meta?.type === 'control' ? (
                       renderControlPlaceholder(meta?.controlType)
                     ) : meta?.type === 'display' ? (

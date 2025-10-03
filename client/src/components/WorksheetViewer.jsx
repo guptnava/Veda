@@ -935,7 +935,7 @@ function WorksheetViewerInner({ onFooterMetricsChange = () => {}, refreshHeapUsa
                   ) : null}
                 </div>
                 <div style={{ fontSize: '0.72rem', color: '#859bca', lineHeight: 1.4 }}>
-                  Drag a saved CSV entry onto the drop zone to preview it. Uploaded files are stored on the server and listed below.
+                  Drag a saved CSV entry onto the drop zone to preview it. 
                 </div>
                 <div
                   style={{

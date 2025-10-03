@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import HeaderBar from './HeaderBar';
 import FooterBar from './FooterBar';
 
@@ -36,7 +36,7 @@ export default function StandaloneChrome({ title, children }) {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [toolsetActive, setToolsetActive] = useState(false);
 
-  const getHeapUsageMB = () => {
+  const getHeapUsageMB = useCallback(() => {
     try {
       const used = performance?.memory?.usedJSHeapSize;
       if (typeof used === 'number' && Number.isFinite(used)) {
@@ -46,7 +46,7 @@ export default function StandaloneChrome({ title, children }) {
       console.warn('Heap usage read failed', err);
     }
     return null;
-  };
+  }, []);
 
   const [footerMetrics, setFooterMetrics] = useState({
     heapUsedMB: getHeapUsageMB(),
@@ -54,13 +54,13 @@ export default function StandaloneChrome({ title, children }) {
     avgResponseTime: NaN,
   });
 
-  const handleFooterMetricsChange = (partial = {}) => {
+  const handleFooterMetricsChange = useCallback((partial = {}) => {
     setFooterMetrics(prev => ({ ...prev, ...partial }));
-  };
+  }, []);
 
-  const refreshHeapUsage = () => {
+  const refreshHeapUsage = useCallback(() => {
     handleFooterMetricsChange({ heapUsedMB: getHeapUsageMB() });
-  };
+  }, [getHeapUsageMB, handleFooterMetricsChange]);
 
   const handleFreeContent = () => {
     try {
@@ -73,7 +73,7 @@ export default function StandaloneChrome({ title, children }) {
     refreshHeapUsage();
   };
 
-  const injectedProps = {
+  const injectedProps = useMemo(() => ({
     tableButtonPermissions,
     sendSqlToLlm,
     perfMaxClientRows,
@@ -94,7 +94,28 @@ export default function StandaloneChrome({ title, children }) {
     maxVisibleMessages,
     onFooterMetricsChange: handleFooterMetricsChange,
     refreshHeapUsage,
-  };
+  }), [
+    tableButtonPermissions,
+    sendSqlToLlm,
+    perfMaxClientRows,
+    perfMaxScan,
+    perfMaxDistinct,
+    virtualizeOnMaximize,
+    virtMaxClientRows,
+    virtRowHeight,
+    serverMode,
+    tableOpsMode,
+    pushDownDb,
+    logEnabled,
+    trainingUrl,
+    updateIntervalMs,
+    minRowsPerUpdate,
+    clobPreview,
+    blobPreview,
+    maxVisibleMessages,
+    handleFooterMetricsChange,
+    refreshHeapUsage,
+  ]);
 
   const enhancedChildren = React.Children.map(children, (child) => {
     if (!React.isValidElement(child)) return child;

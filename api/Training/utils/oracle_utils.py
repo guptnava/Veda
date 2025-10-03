@@ -255,9 +255,10 @@ def insert_questions(conn, df):
     """
     cur = conn.cursor()
   
-    cur.execute("DELETE FROM NL2SQL_SYNONYMS")
-    cur.execute("DELETE FROM NL2SQL_EMBEDDINGS")
-    cur.execute("DELETE FROM NL2SQL_TRAINING")
+  
+    cur.execute("truncate table  NL2SQL_EMBEDDINGS")
+    cur.execute("truncate table  NL2SQL_SYNONYMS")
+    cur.execute("delete from  NL2SQL_TRAINING")
     
     conn.commit()
 

@@ -7,6 +7,8 @@ import WorksheetViewer from './components/WorksheetViewer';
 import PinnedTableView from './components/PinnedTableView';
 import DataScienceBench from './components/DataScienceBench';
 import NotebookWorkbench from './components/NotebookWorkbench';
+import WorkflowStudio from './components/WorkflowStudio';
+import TimeStudio from './components/TimeStudio';
 import earthIcon from './icons/earth.jpg';
 import settingsGlyph from './icons/settings.svg';
 import chartGlyph from './icons/dashboard_builder.svg';
@@ -14,6 +16,8 @@ import dashboardViewerGlyph from './icons/dashboard_viewer.svg';
 import worksheetViewerGlyph from './icons/worksheet_viewer.svg';
 import chatbookGlyph from './icons/notebook.svg';
 import trainingGlyph from './icons/training.svg';
+import workflowGlyph from './icons/workflow_studio.svg';
+import timeGlyph from './icons/time_studio.svg';
 import copyGlyph from './icons/copy.svg';
 import LeftPanel from './components/LeftPanel';
 import './Veda.css';
@@ -105,6 +109,12 @@ export default function App() {
     }
     if (page === 'notebook-workbench') {
       return <NotebookWorkbench />;
+    }
+    if (page === 'workflow-studio') {
+      return <WorkflowStudio />;
+    }
+    if (page === 'time-studio') {
+      return <TimeStudio />;
     }
   } catch {}
   const cleanStreamText = (s) => {
@@ -807,6 +817,20 @@ export default function App() {
     } catch {}
   };
 
+  const openWorkflowStudio = () => {
+    try {
+      const url = `${window.location.pathname}?page=workflow-studio`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
+  const openTimeStudio = () => {
+    try {
+      const url = `${window.location.pathname}?page=time-studio`;
+      window.open(url, '_blank', 'noopener');
+    } catch {}
+  };
+
   const toolsetButtonStyle = {
     display: 'flex',
     alignItems: 'center',
@@ -1119,6 +1143,36 @@ export default function App() {
             onMouseEnter={onToolsetHoverIn}
             onMouseLeave={onToolsetHoverOut}
             onClick={() => {
+              openWorkflowStudio();
+              setIsToolsetOpen(false);
+            }}
+          >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={workflowGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Workflow Studio
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
+              openTimeStudio();
+              setIsToolsetOpen(false);
+            }}
+          >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <img src={timeGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
+              Time Studio
+            </span>
+          </button>
+          <button
+            type="button"
+            style={toolsetButtonStyle}
+            onMouseEnter={onToolsetHoverIn}
+            onMouseLeave={onToolsetHoverOut}
+            onClick={() => {
               openChatBoardViewer();
               setIsToolsetOpen(false);
             }}
@@ -1140,7 +1194,11 @@ export default function App() {
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
               <img src={chatbookGlyph} alt="" aria-hidden="true" style={toolsetIconStyle} />
-              Data Science Bench
+              <span>
+                <span style={{ color: theme.textPrimary }}>Con</span>
+                <span style={{ color: theme.accent }}>BI</span>
+                {' '}Bench
+              </span>
             </span>
           </button>
           <button

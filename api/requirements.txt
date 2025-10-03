@@ -17,7 +17,7 @@ requests
 beautifulsoup4
 cx_Oracle
 
-pyhive[hive]
+#pyhive[hive]
 pandas
 pyarrow
 kerberos
