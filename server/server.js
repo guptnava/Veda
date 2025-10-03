@@ -21,6 +21,15 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+const PYTHON_VENV_DIR = path.resolve(__dirname, '../api/venv');
+const PYTHON_BIN_DIR = process.platform === 'win32'
+  ? path.join(PYTHON_VENV_DIR, 'Scripts')
+  : path.join(PYTHON_VENV_DIR, 'bin');
+const PYTHON_EXECUTABLE = process.env.PYTHON_EXECUTABLE
+  || path.join(PYTHON_BIN_DIR, process.platform === 'win32' ? 'python.exe' : 'python3');
+const PYTHON_FALLBACK = process.platform === 'win32' ? 'python' : 'python3';
+const pythonCmd = fs.existsSync(PYTHON_EXECUTABLE) ? PYTHON_EXECUTABLE : PYTHON_FALLBACK;
+
 // Middleware
 app.use(cors());
 
@@ -427,7 +436,7 @@ app.post('/api/python/execute', async (req, res) => {
 
     const pythonBridge = `import sys, json\ntry:\n    import pandas as pd\nexcept Exception:\n    pd = None\n\nmatplotlib = None\ntry:\n    import matplotlib\n    matplotlib.use('Agg')\n    import matplotlib.pyplot as plt\nexcept Exception:\n    plt = None\n\nfrom io import BytesIO, StringIO\nimport base64\nimport contextlib\n\npayload = json.loads(sys.stdin.read())\nframes = payload.get('frames') or {}\ntables = {}\nfor name, rows in frames.items():\n    try:\n        if pd is not None:\n            tables[name] = pd.DataFrame(rows)\n        else:\n            tables[name] = rows\n    except Exception:\n        tables[name] = rows\n\n_publish_counter = [len(tables)]\n\ndef publish(df, name=None):\n    key = name or getattr(df, '__name__', None)\n    if not key:\n        _publish_counter[0] += 1\n        key = f"table_{_publish_counter[0]}"\n    tables[key] = df\n    return df\n\nstdout_capture = StringIO()\nstderr_capture = StringIO()\nexec_globals = {'pd': pd, 'tables': tables, 'dataframes': tables, 'publish': publish, 'plt': plt, 'matplotlib': matplotlib}\nexec_locals = {}\ncode = payload.get('code', '')\nwith contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):\n    exec(code, exec_globals, exec_locals)\nresult_tables = {}\nfigures = []\nIGNORE = {'_base_sql', '_column_types', '_search_columns'}\nfor name, value in tables.items():\n    try:\n        if pd is not None and hasattr(value, 'to_dict'):\n            records = value.replace({pd.NA: None}).to_dict(orient='records')\n        elif isinstance(value, list):\n            records = value\n        else:\n            continue\n        sanitized = []\n        for row in records:\n            if isinstance(row, dict):\n                sanitized.append({k: v for k, v in row.items() if k not in IGNORE})\n            else:\n                sanitized.append({'value': row})\n        result_tables[name] = sanitized\n    except Exception:\n        pass\n\nif plt is not None:\n    for num in plt.get_fignums():\n        try:\n            fig = plt.figure(num)\n            buf = BytesIO()\n            fig.savefig(buf, format='png', bbox_inches='tight')\n            buf.seek(0)\n            figures.append({\n                'name': f'figure_{num}',\n                'image': base64.b64encode(buf.read()).decode('ascii')\n            })\n        except Exception:\n            continue\n    plt.close('all')\n\nout = {\n    'stdout': stdout_capture.getvalue(),\n    'stderr': stderr_capture.getvalue(),\n    'tables': result_tables,\n    'figures': figures\n}\nprint(json.dumps(out))`;
 
-    const py = spawn('python3', ['-c', pythonBridge], {
+    const py = spawn(pythonCmd, ['-c', pythonBridge], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
     });
@@ -467,10 +476,24 @@ app.post('/api/python/execute', async (req, res) => {
             sanitizedTables[name] = sanitizeRows(rows);
           }
         }
+        const figures = Array.isArray(parsed.figures)
+          ? parsed.figures
+              .map((fig, idx) => {
+                if (!fig || typeof fig !== 'object') return null;
+                const image = typeof fig.image === 'string' ? fig.image.trim() : '';
+                if (!image) return null;
+                const name = typeof fig.name === 'string' && fig.name.trim()
+                  ? fig.name
+                  : `figure_${idx + 1}`;
+                return { image, name };
+              })
+              .filter(Boolean)
+          : [];
         return res.json({
           stdout: parsed.stdout || '',
           stderr: parsed.stderr || '',
           tables: sanitizedTables,
+          figures,
         });
       } catch (err) {
         return res.status(500).json({ error: 'Failed to parse Python output.', raw: stdoutData });

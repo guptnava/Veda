@@ -23,5 +23,6 @@ pyarrow
 kerberos
 streamlit
 watchdog
+matplotlib
 
 

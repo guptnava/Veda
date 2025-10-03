@@ -159,11 +159,12 @@ const buildGraphExampleBlock = (dfVar, label) => `if plt is not None:
         numeric_cols = [col for col in ${dfVar}.select_dtypes(include=['number']).columns]
         if numeric_cols:
             preview = ${dfVar}.head(10)
-            ax = preview[numeric_cols].plot(kind='bar', figsize=(8, 4))
+            fig, ax = plt.subplots(figsize=(8, 4))
+            preview[numeric_cols].plot(kind='bar', ax=ax)
             ax.set_title('${label ? label.replace(/'/g, "\\'") : 'Quick Preview'} (first 10 rows)')
             ax.set_xlabel('Row Index')
             ax.set_ylabel('Value')
-            plt.tight_layout()
+            fig.tight_layout()
     except Exception:
         pass`;
 
@@ -180,7 +181,7 @@ const buildPythonDataframeSnippet = ({
   const commentLine = `# ${commentParts.join(' | ')}`;
   const friendlyLabel = (dfName || safeName || 'Dataset').replace(/'/g, "\\'");
 
-  const importsBlock = `import os\nimport json\nimport requests\nimport pandas as pd\n\nAPI_BASE_URL = os.getenv("VEDA_API_BASE", "http://localhost:3000")\nAPI_TOKEN = os.getenv("VEDA_API_TOKEN")\n\n_session = requests.Session()\nif API_TOKEN:\n    _session.headers.update({"Authorization": f"Bearer {API_TOKEN}"})\n\n`;
+  const importsBlock = `import os\nimport json\nimport requests\nimport pandas as pd\n\ntry:\n    import matplotlib\n    matplotlib.use('Agg')\n    import matplotlib.pyplot as plt\nexcept Exception:\n    plt = None\n\nAPI_BASE_URL = os.getenv("VEDA_API_BASE", "http://localhost:3000")\nAPI_TOKEN = os.getenv("VEDA_API_TOKEN")\n\n_session = requests.Session()\nif API_TOKEN:\n    _session.headers.update({"Authorization": f"Bearer {API_TOKEN}"})\n\n`;
 
   if (sourceType === 'csv' && csvMeta?.endpoint) {
     const endpoint = csvMeta.endpoint;
@@ -195,7 +196,7 @@ const buildPythonDataframeSnippet = ({
       .replace(/`/g, '\\`');
 
     const graphBlock = buildGraphExampleBlock(safeName, friendlyLabel);
-    return `${importsBlock}${commentLine}\nquery_payload = json.loads('''${pythonJson}''')\nresponse = _session.post(f"{API_BASE_URL}/api/table/query", json=query_payload, timeout=180)\nresponse.raise_for_status()\nresult = response.json()\n\nrows = result.get("rows") or result.get("data") or []\ncolumns = result.get("columns")\nif not columns:\n    table = result.get("table") or {}\n    columns = table.get("columns") or table.get("headers")\nif columns and rows and isinstance(rows[0], (list, tuple)):\n    records = [dict(zip(columns, row)) for row in rows]\nelse:\n    records = rows\n\n${safeName} = pd.DataFrame(records)\n# publish(${safeName}, "${safeName}")  # Uncomment to preview in notebook\n${graphBlock}\n${safeName}`;
+    return `${importsBlock}${commentLine}\nquery_payload = json.loads('''${pythonJson}''')\nquery_payload['all'] = True\nresponse = _session.post(f"{API_BASE_URL}/api/table/query", json=query_payload, timeout=180)\nresponse.raise_for_status()\nresult = response.json()\n\nrows = result.get("rows") or result.get("data") or []\ncolumns = result.get("columns")\nif not columns:\n    table = result.get("table") or {}\n    columns = table.get("columns") or table.get("headers")\nif columns and rows and isinstance(rows[0], (list, tuple)):\n    records = [dict(zip(columns, row)) for row in rows]\nelse:\n    records = rows\n\n${safeName} = pd.DataFrame(records)\n# publish(${safeName}, "${safeName}")  # Uncomment to preview in notebook\n${graphBlock}\n${safeName}`;
   }
 
   const graphBlock = buildGraphExampleBlock(safeName, friendlyLabel);
@@ -302,6 +303,141 @@ const cleanStreamText = (value) => {
   } catch {
     return value;
   }
+};
+
+const SAVED_VIEW_TOTAL_KEYS = [
+  'totalRows', 'rowsTotal', 'rowCount', 'totalRowCount',
+  'total_rows', 'rows_total', 'row_count',
+  'TOTAL_ROWS', 'ROWS_TOTAL', 'ROW_COUNT',
+  'total',
+];
+const SAVED_VIEW_SERVER_KEYS = ['serverMode', 'server_mode', 'SERVER_MODE'];
+
+const parseMaybeJsonObject = (value) => {
+  if (!value || typeof value === 'function') return null;
+  if (Array.isArray(value)) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const collectSavedViewScopes = (viewContent, exportContext, jsonPayload) => {
+  const scopes = [];
+  const pushScope = (candidate) => {
+    const parsed = parseMaybeJsonObject(candidate);
+    if (parsed) scopes.push(parsed);
+  };
+
+  pushScope(jsonPayload);
+  if (jsonPayload && typeof jsonPayload === 'object') {
+    pushScope(jsonPayload.pagination);
+    pushScope(jsonPayload.meta);
+  }
+
+  pushScope(viewContent);
+  if (viewContent && typeof viewContent === 'object') {
+    pushScope(viewContent.state);
+    pushScope(viewContent.STATE);
+    pushScope(viewContent.content);
+    pushScope(viewContent.CONTENT);
+  }
+
+  const viewState = parseMaybeJsonObject(viewContent?.viewState || viewContent?.view_state);
+  if (viewState) {
+    pushScope(viewState);
+    pushScope(viewState.state || viewState.STATE);
+    pushScope(viewState.viewState || viewState.view_state);
+    pushScope(viewState.options || viewState.OPTIONS);
+  }
+
+  const contentOptions = parseMaybeJsonObject(viewContent?.options || viewContent?.OPTIONS);
+  if (contentOptions) pushScope(contentOptions);
+
+  const nestedState = parseMaybeJsonObject(viewContent?.state || viewContent?.STATE);
+  if (nestedState) {
+    pushScope(nestedState);
+    pushScope(nestedState.options || nestedState.OPTIONS);
+  }
+
+  const parsedExport = parseMaybeJsonObject(exportContext);
+  if (parsedExport) pushScope(parsedExport);
+
+  return scopes;
+};
+
+const pickFirstFiniteNumber = (values) => {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num) && num >= 0) return num;
+  }
+  return null;
+};
+
+const pickFirstBoolean = (values) => {
+  for (const value of values) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+  }
+  return null;
+};
+
+const deriveSavedViewTotalRows = (viewContent, jsonPayload, exportContext, fallbackCount) => {
+  const scopes = collectSavedViewScopes(viewContent, exportContext, jsonPayload);
+  const values = [];
+  if (jsonPayload && typeof jsonPayload === 'object' && 'total' in jsonPayload) values.push(jsonPayload.total);
+  for (const scope of scopes) {
+    for (const key of SAVED_VIEW_TOTAL_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(scope, key)) {
+        values.push(scope[key]);
+      }
+    }
+  }
+  const picked = pickFirstFiniteNumber(values);
+  if (picked !== null) return picked;
+  return Number.isFinite(fallbackCount) && fallbackCount >= 0 ? fallbackCount : 0;
+};
+
+const deriveSavedViewServerMode = (viewContent, jsonPayload, exportContext, totalRows, sampleRows, defaultMode) => {
+  const scopes = collectSavedViewScopes(viewContent, exportContext, jsonPayload);
+  const candidates = [];
+  for (const scope of scopes) {
+    for (const key of SAVED_VIEW_SERVER_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(scope, key)) {
+        candidates.push(scope[key]);
+      }
+    }
+  }
+
+  const explicit = pickFirstBoolean(candidates);
+  if (explicit === true) return true;
+  if (explicit === false) {
+    if (exportContext && Number.isFinite(totalRows) && totalRows > (sampleRows || 0)) {
+      return true;
+    }
+    return false;
+  }
+
+  if (exportContext) {
+    if (Number.isFinite(totalRows) && totalRows > (sampleRows || 0)) return true;
+    return true;
+  }
+
+  return defaultMode;
 };
 
 export default function NotebookWorkbench({
@@ -976,18 +1112,23 @@ export default function NotebookWorkbench({
               }
             : null;
 
+          const textBlocks = [];
+          if (stdoutClean) textBlocks.push(`### stdout\n\n\`\`\`\n${stdoutClean}\n\`\`\``);
+          if (stderrClean) textBlocks.push(`### stderr\n\n\`\`\`\n${stderrClean}\n\`\`\``);
+          const combinedText = textBlocks.join('\n\n');
+
           setCells((prev) =>
             prev.map((c) => {
               if (c.id !== cell.id) return c;
               return {
                 ...c,
                 dfName: primaryKey,
-                showOutput: true,
-                outputData: primaryData,
+                showOutput: !!(primaryData.length || figures.length || combinedText),
+                outputData: primaryData.length ? primaryData : null,
                 outputCollapsed: false,
-                outputActiveColumn: firstColumn,
-                outputRaw: '',
-                outputTableProps: pythonTableProps,
+                outputActiveColumn: primaryData.length ? firstColumn : null,
+                outputRaw: combinedText,
+                outputTableProps: primaryData.length ? pythonTableProps : null,
                 outputFigures: figures,
               };
             }),
@@ -1178,6 +1319,11 @@ export default function NotebookWorkbench({
             virtualizeOnMaximize={tableVirtualize}
             virtualRowHeight={tableVirtualRowHeight}
           />
+          {cell.outputRaw ? (
+            <div style={{ marginTop: 16, fontSize: '0.9rem', color: '#d7e4ff', lineHeight: 1.5 }}>
+              <ReactMarkdown children={cell.outputRaw} remarkPlugins={[remarkGfm]} />
+            </div>
+          ) : null}
           {figures.length ? (
             <div style={{ marginTop: 16 }}>{renderFigures()}</div>
           ) : null}
@@ -1646,8 +1792,19 @@ export default function NotebookWorkbench({
 
       const viewName = payload.viewName || 'Saved view';
       const viewContent = payload.content || {};
-      const exportContext = viewContent.exportContext || viewContent.export_context || null;
-      if (!exportContext || !exportContext.prompt || !exportContext.mode || !exportContext.model) {
+      let exportContext = viewContent.exportContext || viewContent.export_context || null;
+      if (!exportContext) {
+        const scopeWithExport = collectSavedViewScopes(viewContent, null, null).find((scope) => {
+          if (!scope) return false;
+          return Boolean(scope.exportContext || scope.export_context);
+        });
+        if (scopeWithExport) {
+          exportContext = scopeWithExport.exportContext || scopeWithExport.export_context;
+        }
+      }
+      const parsedExportCtx = parseMaybeJsonObject(exportContext);
+      if (parsedExportCtx) exportContext = parsedExportCtx;
+      if (!exportContext || typeof exportContext !== 'object' || !exportContext.prompt || !exportContext.mode || !exportContext.model) {
         const message = 'Saved view is missing query context; unable to preview.';
         setCells((prev) =>
           prev.map((c) =>
@@ -1775,13 +1932,9 @@ export default function NotebookWorkbench({
 
         const columns = nextRows.length && typeof nextRows[0] === 'object' ? Object.keys(nextRows[0] || {}) : [];
         const activeColumn = columns.length ? columns[0] : null;
-        const totalRows = Number(json?.total) || nextRows.length;
-        const resolvedServerMode = (() => {
-          if (viewContent.serverMode !== undefined) return !!viewContent.serverMode;
-          if (json?.serverMode !== undefined) return !!json.serverMode;
-          if (exportContext && totalRows > nextRows.length) return true;
-          return globalServerMode;
-        })();
+        const sampleRows = nextRows.length;
+        const totalRows = deriveSavedViewTotalRows(viewContent, json, exportContext, sampleRows);
+        const resolvedServerMode = deriveSavedViewServerMode(viewContent, json, exportContext, totalRows, sampleRows, globalServerMode);
         const initialPageSize = Math.max(1, Number(viewContent.pageSize) || TABLE_COMPONENT_DEFAULT_PAGE_SIZE);
         const initialFontSize = Number(viewContent.fontSize) || 11;
         const initialViewState = viewContent.viewState || viewContent.view_state || viewContent.initialViewState || viewContent || null;

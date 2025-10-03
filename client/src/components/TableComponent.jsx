@@ -1812,7 +1812,10 @@ const TableComponent = React.memo(({ data, initialPageSize = TABLE_COMPONENT_DEF
 
   // pagination (last step) — in serverMode, rows come from server
   const sourceRows = isPivotView ? pivotedData : (serverMode ? serverRowsWithDerived : sortedData);
-  const effectiveTotal = isPivotView ? pivotedData.length : (serverMode ? (serverTotal || 0) : sourceRows.length);
+  const totalRowsHint = Number(totalRows);
+  const totalRowsValue = Number.isFinite(totalRowsHint) && totalRowsHint >= 0 ? totalRowsHint : null;
+  const serverTotalEffective = serverMode ? (serverTotal || totalRowsValue || 0) : null;
+  const effectiveTotal = isPivotView ? pivotedData.length : (serverMode ? serverTotalEffective : sourceRows.length);
   const totalPages = Math.max(1, Math.ceil((effectiveTotal || 0) / pageSize) || 1);
   const paginatedData = React.useMemo(() => {
     if (serverMode) return isPivotView ? pivotedData : serverRowsWithDerived;

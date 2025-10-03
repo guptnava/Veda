@@ -1,0 +1,13 @@
+flask-db-intent-5012 71991 /Users/naveengupta/veda/api/database_NoLLM_agent/flask-db-intent-5012_20251003-215224.log
+flask-db-intent-nomodel-5011 71998 /Users/naveengupta/veda/api/database_NoLLM_agent/flask-db-intent-nomodel-5011_20251003-215224.log
+flask-db-langchain-5013 72005 /Users/naveengupta/veda/api/database_LLM_agent/flask-db-langchain-5013_20251003-215224.log
+flask-db-langchain-prompt-5014 72012 /Users/naveengupta/veda/api/database_LLM_agent/flask-db-langchain-prompt-5014_20251003-215224.log
+flask-db-langchain-embed-5004 72019 /Users/naveengupta/veda/api/database_LLM_agent/flask-db-langchain-embed-5004_20251003-215224.log
+flask-db-langchain-embed-narr-5009 72026 /Users/naveengupta/veda/api/database_LLM_agent/flask-db-langchain-embed-narr-5009_20251003-215224.log
+flask-rest-rado-5005 72033 /Users/naveengupta/veda/api/restful_LLM_agent/flask-rest-rado-5005_20251003-215224.log
+flask-rest-embed-5006 72040 /Users/naveengupta/veda/api/restful_LLM_agent/flask-rest-embed-5006_20251003-215224.log
+flask-generic-rag-5010 72047 /Users/naveengupta/veda/api/database_generic_rag_LLM_agent/flask-generic-rag-5010_20251003-215224.log
+flask-table-ops-5015 72054 /Users/naveengupta/veda/api/table_ops_service/flask-table-ops-5015_20251003-215224.log
+node-server-3000 72061 /Users/naveengupta/veda/server/node-server-3000_20251003-215224.log
+vite-frontend-5173 72068 /Users/naveengupta/veda/client/vite-frontend-5173_20251003-215224.log
+streamlit-training-8501 72075 /Users/naveengupta/veda/api/Training/streamlit-training-8501_20251003-215224.log

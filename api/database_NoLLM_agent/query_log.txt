@@ -1948,3 +1948,58 @@ SQL: SELECT * FROM sales
 [2025-10-03 20:10:59] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
 Intent: list all sales
 SQL: SELECT * FROM sales
+
+---
+[2025-10-03 20:18:38] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 20:54:18] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:02:49] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:11:16] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:42:45] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:44:11] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:52:49] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 21:57:27] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all employees
+SQL: SELECT * FROM user_tables
+
+---
+[2025-10-03 22:24:36] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 22:24:36] IP: 127.0.0.1, UA: python-requests/2.32.5, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
+
+---
+[2025-10-03 22:32:04] IP: 127.0.0.1, UA: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0, Model: llama3.2:1b
+Intent: list all sales
+SQL: SELECT * FROM sales
