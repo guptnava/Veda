@@ -124,7 +124,7 @@ export default function StandaloneChrome({ title, children }) {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#0b0b0b' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', maxHeight: '100vh', overflow: 'hidden', background: '#0b0b0b' }}>
       <HeaderBar
         title={title}
         isPanelOpen={isPanelOpen}
@@ -169,7 +169,7 @@ export default function StandaloneChrome({ title, children }) {
         maxVisibleMessages={maxVisibleMessages}
         setMaxVisibleMessages={setMaxVisibleMessages}
       />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{enhancedChildren}</div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{enhancedChildren}</div>
       <FooterBar
         heapUsedMB={footerMetrics.heapUsedMB}
         rowsFetchedTotal={footerMetrics.rowsFetchedTotal}

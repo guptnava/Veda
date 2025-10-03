@@ -127,6 +127,7 @@ const createCell = (type = 'text') => {
     outputActiveColumn: null,
     outputRaw: '',
     outputTableProps: null,
+    outputFigures: [],
     ...template,
   };
 };
@@ -146,6 +147,60 @@ const cardStyle = {
 
 const IGNORED_META_KEYS = new Set(['_base_sql', '_column_types', '_search_columns']);
 const DB_AGENTS = ['database', 'langchainprompt', 'restful', 'embedded', 'embedded_narrated', 'generic_rag', 'database1'];
+
+const sanitizeName = (value) =>
+  (value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+const buildGraphExampleBlock = (dfVar, label) => `if plt is not None:
+    try:
+        numeric_cols = [col for col in ${dfVar}.select_dtypes(include=['number']).columns]
+        if numeric_cols:
+            preview = ${dfVar}.head(10)
+            ax = preview[numeric_cols].plot(kind='bar', figsize=(8, 4))
+            ax.set_title('${label ? label.replace(/'/g, "\\'") : 'Quick Preview'} (first 10 rows)')
+            ax.set_xlabel('Row Index')
+            ax.set_ylabel('Value')
+            plt.tight_layout()
+    except Exception:
+        pass`;
+
+const buildPythonDataframeSnippet = ({
+  dfName,
+  sourceType,
+  totalRows = null,
+  csvMeta = null,
+  savedViewRequest = null,
+}) => {
+  const safeName = sanitizeName(dfName) || 'dataset';
+  const commentParts = [`Dataset: ${safeName}`];
+  if (Number.isFinite(totalRows)) commentParts.push(`rows=${totalRows}`);
+  const commentLine = `# ${commentParts.join(' | ')}`;
+  const friendlyLabel = (dfName || safeName || 'Dataset').replace(/'/g, "\\'");
+
+  const importsBlock = `import os\nimport json\nimport requests\nimport pandas as pd\n\nAPI_BASE_URL = os.getenv("VEDA_API_BASE", "http://localhost:3000")\nAPI_TOKEN = os.getenv("VEDA_API_TOKEN")\n\n_session = requests.Session()\nif API_TOKEN:\n    _session.headers.update({"Authorization": f"Bearer {API_TOKEN}"})\n\n`;
+
+  if (sourceType === 'csv' && csvMeta?.endpoint) {
+    const endpoint = csvMeta.endpoint;
+    const graphBlock = buildGraphExampleBlock(safeName, friendlyLabel);
+    return `${importsBlock}${commentLine}\nresponse = _session.get(f"{API_BASE_URL}${endpoint}", timeout=120)\nresponse.raise_for_status()\npayload = response.json()\n\ntable = payload.get("table", {})\ndata = table.get("data") or table.get("rows") or []\nheaders = table.get("headers") or table.get("columns")\nif headers and data and isinstance(data[0], (list, tuple)):\n    records = [dict(zip(headers, row)) for row in data]\nelse:\n    records = data\n\n${safeName} = pd.DataFrame(records)\n# publish(${safeName}, "${safeName}")  # Uncomment to preview in notebook\n${graphBlock}\n${safeName}`;
+  }
+
+  if (sourceType === 'saved-view' && savedViewRequest) {
+    const pythonJson = JSON.stringify(savedViewRequest, null, 2)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/`/g, '\\`');
+
+    const graphBlock = buildGraphExampleBlock(safeName, friendlyLabel);
+    return `${importsBlock}${commentLine}\nquery_payload = json.loads('''${pythonJson}''')\nresponse = _session.post(f"{API_BASE_URL}/api/table/query", json=query_payload, timeout=180)\nresponse.raise_for_status()\nresult = response.json()\n\nrows = result.get("rows") or result.get("data") or []\ncolumns = result.get("columns")\nif not columns:\n    table = result.get("table") or {}\n    columns = table.get("columns") or table.get("headers")\nif columns and rows and isinstance(rows[0], (list, tuple)):\n    records = [dict(zip(columns, row)) for row in rows]\nelse:\n    records = rows\n\n${safeName} = pd.DataFrame(records)\n# publish(${safeName}, "${safeName}")  # Uncomment to preview in notebook\n${graphBlock}\n${safeName}`;
+  }
+
+  const graphBlock = buildGraphExampleBlock(safeName, friendlyLabel);
+  return `${importsBlock}${commentLine}\n${safeName} = pd.DataFrame([])\n# publish(${safeName}, "${safeName}")  # Uncomment to preview in notebook\n${graphBlock}\n${safeName}`;
+};
 
 const appendObjectRecord = (target, obj, limit = Infinity) => {
   if (!obj || typeof obj !== 'object') return;
@@ -284,6 +339,13 @@ export default function NotebookWorkbench({
   const [agent, setAgent] = useState('direct');
   const [runningCellId, setRunningCellId] = useState(null);
   const [dragOverCellId, setDragOverCellId] = useState(null);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [savedViewsCollapsed, setSavedViewsCollapsed] = useState(false);
+  const [csvCollapsed, setCsvCollapsed] = useState(false);
+  const [csvEntries, setCsvEntries] = useState([]);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [csvError, setCsvError] = useState(null);
 
   const resolvedPerfMaxClientRows = Number(perfMaxClientRows);
   const maxClientRowsCap = resolvedPerfMaxClientRows < 0
@@ -871,12 +933,15 @@ export default function NotebookWorkbench({
             sanitizedTables[primaryKey] = primaryData;
           }
 
+          const figures = Array.isArray(payload.figures) ? payload.figures.filter((fig) => fig && fig.image) : [];
+
           setResults((prev) => {
             const dataFrames = { ...prev.dataFrames, ...sanitizedTables };
             const logs = [...prev.logs, `🐍 [${stamp}] Python cell executed (${primaryData.length} rows).`];
             if (stdoutClean) logs.push(`ℹ️ [${stamp}] stdout captured (${stdoutClean.length} chars hidden).`);
             if (stderrClean) logs.push(`ℹ️ [${stamp}] stderr captured (${stderrClean.length} chars hidden).`);
             if (primaryData.length) logs.push(`📦 [${stamp}] Output stored as ${primaryKey}.`);
+            if (figures.length) logs.push(`🖼️ [${stamp}] Python produced ${figures.length} figure(s).`);
             return {
               ...prev,
               table: primaryData.length ? primaryData : prev.table,
@@ -891,6 +956,26 @@ export default function NotebookWorkbench({
             ? Object.keys(primaryData[0])[0] || null
             : null;
 
+          const pythonTableProps = primaryData.length
+            ? {
+                data: primaryData,
+                exportContext: null,
+                tableOpsMode: 'python-local',
+                pushDownDb: false,
+                totalRows: primaryData.length,
+                serverMode: false,
+                initialPageSize: Math.min(TABLE_COMPONENT_DEFAULT_PAGE_SIZE, primaryData.length),
+                initialFontSize: 11,
+                buttonsDisabled: false,
+                previewOptions: { ...resolvedPreviewOptions },
+                perfOptions: { ...resolvedPerfOptions },
+                initialViewState: null,
+                initialSchema: null,
+                virtualizeOnMaximize,
+                virtualRowHeight: virtRowHeight,
+              }
+            : null;
+
           setCells((prev) =>
             prev.map((c) => {
               if (c.id !== cell.id) return c;
@@ -902,7 +987,8 @@ export default function NotebookWorkbench({
                 outputCollapsed: false,
                 outputActiveColumn: firstColumn,
                 outputRaw: '',
-                outputTableProps: null,
+                outputTableProps: pythonTableProps,
+                outputFigures: figures,
               };
             }),
           );
@@ -1037,6 +1123,24 @@ export default function NotebookWorkbench({
   }, []);
 
   const renderOutputPreview = (cell) => {
+    const figures = Array.isArray(cell?.outputFigures) ? cell.outputFigures.filter((fig) => fig && fig.image) : [];
+    const renderFigures = () => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {figures.map((fig, idx) => (
+          <div key={`${fig.name || 'figure'}-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <img
+              src={`data:image/png;base64,${fig.image}`}
+              alt={fig.name || `Figure ${idx + 1}`}
+              style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid rgba(80,110,150,0.4)' }}
+            />
+            {(fig.name && fig.name.trim()) ? (
+              <span style={{ fontSize: '0.75rem', color: '#94a7c8' }}>{fig.name}</span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    );
+
     if (cell?.outputTableProps) {
       const {
         data = [],
@@ -1074,8 +1178,14 @@ export default function NotebookWorkbench({
             virtualizeOnMaximize={tableVirtualize}
             virtualRowHeight={tableVirtualRowHeight}
           />
+          {figures.length ? (
+            <div style={{ marginTop: 16 }}>{renderFigures()}</div>
+          ) : null}
         </div>
       );
+    }
+    if (figures.length) {
+      return renderFigures();
     }
     if (cell?.outputRaw) {
       return (
@@ -1201,6 +1311,33 @@ export default function NotebookWorkbench({
     fetchViews();
   }, []);
 
+  useEffect(() => {
+    const fetchCsvEntries = async () => {
+      try {
+        setCsvLoading(true);
+        setCsvError(null);
+        const res = await fetch('/api/table/csv_entries');
+        const contentType = res.headers?.get?.('content-type') || '';
+        const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+        if (!res.ok) {
+          const message = (payload && payload.error)
+            || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+          throw new Error(message);
+        }
+        const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+        setCsvEntries(entries);
+      } catch (err) {
+        console.error('CSV entries fetch failed', err);
+        setCsvError(err?.message || 'Failed to load CSV entries');
+        setCsvEntries([]);
+      } finally {
+        setCsvLoading(false);
+      }
+    };
+
+    fetchCsvEntries();
+  }, []);
+
   const handleSavedViewDragStart = useCallback((event, view) => {
     if (!event?.dataTransfer || !view) return;
     try {
@@ -1216,15 +1353,35 @@ export default function NotebookWorkbench({
     } catch {}
   }, []);
 
+  const handleCsvDragStart = useCallback((event, entry) => {
+    if (!event?.dataTransfer || !entry) return;
+    const entryId = entry.id ?? entry.entryId ?? entry.entry_id;
+    if (!entryId) return;
+    try {
+      const payload = JSON.stringify({
+        kind: 'csv-entry',
+        entry: {
+          id: entryId,
+          fileName: entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || '',
+        },
+      });
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('application/json', payload);
+      event.dataTransfer.setData('text/plain', payload);
+    } catch (err) {
+      console.warn('CSV drag start failed', err);
+    }
+  }, []);
+
   const handleCellDragEnter = useCallback((event, cell) => {
-    if (!cell || cell.type !== 'text') return;
+    if (!cell || (cell.type !== 'text' && cell.type !== 'python')) return;
     event.preventDefault();
     event.stopPropagation();
     setDragOverCellId(cell.id);
   }, []);
 
   const handleCellDragOver = useCallback((event, cell) => {
-    if (!cell || cell.type !== 'text') return;
+    if (!cell || (cell.type !== 'text' && cell.type !== 'python')) return;
     event.preventDefault();
     event.stopPropagation();
     try {
@@ -1233,7 +1390,7 @@ export default function NotebookWorkbench({
   }, []);
 
   const handleCellDragLeave = useCallback((event, cell) => {
-    if (!cell || cell.type !== 'text') return;
+    if (!cell || (cell.type !== 'text' && cell.type !== 'python')) return;
     try {
       const related = event.relatedTarget;
       if (related && event.currentTarget && event.currentTarget.contains(related)) return;
@@ -1241,12 +1398,23 @@ export default function NotebookWorkbench({
     setDragOverCellId((prev) => (prev === cell.id ? null : prev));
   }, []);
 
-  const handleSavedViewDrop = useCallback(
+  const handlePanelItemHover = useCallback((event, hovered) => {
+    const target = event?.currentTarget;
+    if (!target) return;
+    const background = hovered ? 'rgba(58,92,148,0.25)' : 'rgba(18,28,44,0.22)';
+    const shadow = hovered ? '0 4px 12px rgba(0,0,0,0.22)' : 'none';
+    target.style.background = background;
+    target.style.boxShadow = shadow;
+  }, []);
+
+  const handlePanelItemDrop = useCallback(
     async (event, cell) => {
-      if (!cell || cell.type !== 'text') return;
+      if (!cell || (cell.type !== 'text' && cell.type !== 'python')) return;
       event.preventDefault();
       event.stopPropagation();
       setDragOverCellId(null);
+
+      const isPythonTarget = cell.type === 'python';
 
       const transfer = event.dataTransfer;
       let rawPayload = '';
@@ -1265,7 +1433,216 @@ export default function NotebookWorkbench({
       } catch {
         payload = null;
       }
-      if (!payload || payload.kind !== 'saved-view') return;
+      if (!payload) return;
+
+      if (payload.kind === 'csv-entry') {
+        const entryMeta = (payload.entry && typeof payload.entry === 'object') ? payload.entry : payload;
+        const entryId = entryMeta?.id ?? entryMeta?.entryId ?? entryMeta?.entry_id;
+        if (!entryId) return;
+        const entryLabel = entryMeta?.fileName
+          || entryMeta?.FILE_NAME
+          || entryMeta?.originalName
+          || entryMeta?.ORIGINAL_NAME
+          || `CSV ${entryId}`;
+        const startStamp = new Date().toLocaleTimeString();
+
+        setRunningCellId(cell.id);
+        setCells((prev) =>
+          prev.map((c) =>
+            c.id === cell.id
+              ? {
+                  ...c,
+                  showOutput: true,
+                  outputCollapsed: false,
+                  outputData: [],
+                  outputRaw: 'Loading CSV entry…',
+                  outputActiveColumn: null,
+                  outputTableProps: null,
+                }
+              : c,
+          ),
+        );
+        setResults((prev) => ({
+          ...prev,
+          logs: [...prev.logs, `📥 [${startStamp}] Loading CSV entry ${entryLabel}.`],
+        }));
+
+        const csvEndpointPath = `/api/table/csv_entries/${entryId}/load`;
+
+        try {
+          const res = await fetch(csvEndpointPath);
+          const contentType = res.headers?.get?.('content-type') || '';
+          const body = contentType.includes('application/json') ? await res.json() : await res.text();
+          if (!res.ok) {
+            const message = (body && body.error)
+              || (typeof body === 'string' ? body : `HTTP ${res.status}`);
+            throw new Error(message);
+          }
+
+          const entry = (body && body.entry) || entryMeta || {};
+          const table = (body && body.table) || {};
+          const headers = Array.isArray(table?.headers)
+            ? table.headers
+            : Array.isArray(table?.columns)
+              ? table.columns
+              : [];
+          let tableData = Array.isArray(table?.data) ? table.data : [];
+          if (!tableData.length && Array.isArray(table?.rows)) {
+            tableData = table.rows;
+          }
+
+          let csvRows = [];
+          if (Array.isArray(tableData) && tableData.length) {
+            if (Array.isArray(tableData[0])) {
+              if (headers.length) {
+                csvRows = tableData.map((row) => {
+                  const obj = {};
+                  headers.forEach((header, idx) => {
+                    obj[header] = row[idx];
+                  });
+                  return obj;
+                });
+              } else {
+                csvRows = tableData.map((row) => ({ value: Array.isArray(row) ? row.join(', ') : row }));
+              }
+            } else if (typeof tableData[0] === 'object') {
+              csvRows = tableData.map((row) => (row && typeof row === 'object' ? row : { value: row }));
+            } else {
+              csvRows = tableData.map((row) => ({ value: row }));
+            }
+          }
+
+          if (!csvRows.length && Array.isArray(table?.rows) && Array.isArray(table?.columns)) {
+            csvRows = normalizeRecords([{ columns: table.columns, rows: table.rows }]);
+          }
+          if (!csvRows.length) {
+            csvRows = normalizeRecords(tableData);
+          }
+
+          const labelForName = entry?.fileName || entry?.FILE_NAME || entryLabel;
+          const resolvedDfName = cell.dfName
+            || (sanitizeName(labelForName)
+              ? `${sanitizeName(labelForName)}_${cell.id.slice(-4)}`
+              : `csv_${cell.id.slice(-4)}`);
+          const finishStamp = new Date().toLocaleTimeString();
+          const totalRows = Number(table?.totalRows ?? table?.total ?? csvRows.length);
+          const columns = csvRows.length && typeof csvRows[0] === 'object' ? Object.keys(csvRows[0] || {}) : [];
+          const activeColumn = columns.length ? columns[0] : null;
+
+          setResults((prev) => {
+            const logs = [...prev.logs];
+            if (csvRows.length) {
+              if (isPythonTarget) {
+                logs.push(`✅ [${finishStamp}] CSV entry ${entryLabel} ready for Python cell (${csvRows.length} rows).`);
+              } else {
+                logs.push(`✅ [${finishStamp}] CSV entry ${entryLabel} loaded (${csvRows.length} rows).`);
+              }
+            } else {
+              logs.push(`ℹ️ [${finishStamp}] CSV entry ${entryLabel} returned no rows.`);
+            }
+            const dataFrames = csvRows.length ? { ...prev.dataFrames, [resolvedDfName]: csvRows } : prev.dataFrames;
+            return {
+              ...prev,
+              table: csvRows.length ? csvRows : prev.table,
+              dataFrame: csvRows.length ? csvRows : prev.dataFrame,
+              dataFrames,
+              activeDataFrameName: csvRows.length ? resolvedDfName : prev.activeDataFrameName,
+              logs,
+            };
+          });
+
+          const pythonSnippet = isPythonTarget
+            ? buildPythonDataframeSnippet({
+                dfName: resolvedDfName,
+                sourceType: 'csv',
+                totalRows,
+                csvMeta: { endpoint: csvEndpointPath },
+              })
+            : null;
+
+          setCells((prev) =>
+            prev.map((c) => {
+              if (c.id !== cell.id) return c;
+              const baseUpdate = {
+                ...c,
+                dfName: resolvedDfName,
+                content: pythonSnippet ? pythonSnippet : c.content,
+                outputFigures: [],
+              };
+
+              if (isPythonTarget) {
+                return {
+                  ...baseUpdate,
+                  showOutput: false,
+                  outputCollapsed: false,
+                  outputData: null,
+                  outputRaw: '',
+                  outputActiveColumn: null,
+                  outputTableProps: null,
+                };
+              }
+
+              return {
+                ...baseUpdate,
+                showOutput: true,
+                outputCollapsed: false,
+                outputData: csvRows,
+                outputRaw: csvRows.length ? '' : 'CSV entry returned no rows.',
+                outputActiveColumn: csvRows.length ? activeColumn : null,
+                outputTableProps: {
+                  data: csvRows,
+                  exportContext: null,
+                  tableOpsMode: 'csv-import',
+                  pushDownDb: false,
+                  totalRows,
+                  serverMode: false,
+                  initialPageSize: csvRows.length
+                    ? Math.min(TABLE_COMPONENT_DEFAULT_PAGE_SIZE, csvRows.length)
+                    : TABLE_COMPONENT_DEFAULT_PAGE_SIZE,
+                  initialFontSize: 11,
+                  buttonsDisabled: false,
+                  previewOptions: { ...resolvedPreviewOptions },
+                  perfOptions: { ...resolvedPerfOptions },
+                  initialViewState: null,
+                  initialSchema: null,
+                  virtualizeOnMaximize,
+                  virtualRowHeight: virtRowHeight,
+                },
+                outputFigures: [],
+              };
+            }),
+          );
+        } catch (error) {
+          const message = error?.message || 'Failed to load CSV entry.';
+          const failStamp = new Date().toLocaleTimeString();
+          setCells((prev) =>
+            prev.map((c) =>
+              c.id === cell.id
+                ? {
+                    ...c,
+                    showOutput: true,
+                    outputCollapsed: false,
+                    outputData: [],
+                    outputRaw: `Failed to load CSV entry: ${message}`,
+                    outputActiveColumn: null,
+                    outputTableProps: null,
+                    outputFigures: [],
+                  }
+                : c,
+            ),
+          );
+          setResults((prev) => ({
+            ...prev,
+            logs: [...prev.logs, `⚠️ [${failStamp}] CSV entry ${entryLabel} failed: ${message}`],
+          }));
+        } finally {
+          setRunningCellId((prev) => (prev === cell.id ? null : prev));
+        }
+
+        return;
+      }
+
+      if (payload.kind !== 'saved-view') return;
 
       const viewName = payload.viewName || 'Saved view';
       const viewContent = payload.content || {};
@@ -1283,6 +1660,7 @@ export default function NotebookWorkbench({
                   outputRaw: message,
                   outputActiveColumn: null,
                   outputTableProps: null,
+                  outputFigures: [],
                 }
               : c,
           ),
@@ -1368,11 +1746,6 @@ export default function NotebookWorkbench({
           nextRows = normalizeRecords([json]);
         }
 
-        const sanitizeName = (value) =>
-          (value || '')
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '');
         const defaultName = cell.dfName
           || (sanitizeName(viewName) ? `${sanitizeName(viewName)}_${cell.id.slice(-4)}` : `view_${cell.id.slice(-4)}`);
         const resolvedDfName = defaultName || `view_${cell.id.slice(-4)}`;
@@ -1380,8 +1753,15 @@ export default function NotebookWorkbench({
 
         setResults((prev) => {
           const logs = [...prev.logs];
-          if (nextRows.length) logs.push(`✅ [${finishStamp}] Saved view ${viewName} loaded (${nextRows.length} rows).`);
-          else logs.push(`ℹ️ [${finishStamp}] Saved view ${viewName} returned no rows.`);
+          if (nextRows.length) {
+            if (isPythonTarget) {
+              logs.push(`✅ [${finishStamp}] Saved view ${viewName} ready for Python cell (${nextRows.length} rows).`);
+            } else {
+              logs.push(`✅ [${finishStamp}] Saved view ${viewName} loaded (${nextRows.length} rows).`);
+            }
+          } else {
+            logs.push(`ℹ️ [${finishStamp}] Saved view ${viewName} returned no rows.`);
+          }
           const dataFrames = nextRows.length ? { ...prev.dataFrames, [resolvedDfName]: nextRows } : prev.dataFrames;
           return {
             ...prev,
@@ -1408,12 +1788,39 @@ export default function NotebookWorkbench({
         const initialSchema = viewContent.initialSchema || viewContent.schema || null;
         const perfOptions = viewContent.perfOptions || viewContent.perf_options || { ...resolvedPerfOptions };
         const previewOptions = viewContent.previewOptions || viewContent.preview_options || { ...resolvedPreviewOptions };
+        const pythonSnippet = isPythonTarget
+          ? buildPythonDataframeSnippet({
+              dfName: resolvedDfName,
+              sourceType: 'saved-view',
+              totalRows,
+              savedViewRequest: requestBody,
+            })
+          : null;
+
         setCells((prev) =>
           prev.map((c) => {
             if (c.id !== cell.id) return c;
-            return {
+            const baseUpdate = {
               ...c,
               dfName: resolvedDfName,
+              content: pythonSnippet ? pythonSnippet : c.content,
+              outputFigures: [],
+            };
+
+            if (isPythonTarget) {
+              return {
+                ...baseUpdate,
+                showOutput: false,
+                outputCollapsed: false,
+                outputData: null,
+                outputRaw: '',
+                outputActiveColumn: null,
+                outputTableProps: null,
+              };
+            }
+
+            return {
+              ...baseUpdate,
               showOutput: true,
               outputCollapsed: false,
               outputData: nextRows,
@@ -1436,6 +1843,7 @@ export default function NotebookWorkbench({
                 virtualizeOnMaximize,
                 virtualRowHeight: virtRowHeight,
               },
+              outputFigures: [],
             };
           }),
         );
@@ -1447,16 +1855,17 @@ export default function NotebookWorkbench({
             c.id === cell.id
               ? {
                   ...c,
-                showOutput: true,
-                outputCollapsed: false,
-                outputData: [],
-                outputRaw: `Failed to load saved view: ${message}`,
-                outputActiveColumn: null,
-                outputTableProps: null,
-              }
-            : c,
-        ),
-      );
+                  showOutput: true,
+                  outputCollapsed: false,
+                  outputData: [],
+                  outputRaw: `Failed to load saved view: ${message}`,
+                  outputActiveColumn: null,
+                  outputTableProps: null,
+                  outputFigures: [],
+                }
+              : c,
+          ),
+        );
         setResults((prev) => ({
           ...prev,
           logs: [...prev.logs, `⚠️ [${failStamp}] Saved view ${viewName} failed: ${message}`],
@@ -1465,8 +1874,38 @@ export default function NotebookWorkbench({
         setRunningCellId((prev) => (prev === cell.id ? null : prev));
       }
     },
-    [setCells, setResults, setRunningCellId, setDragOverCellId],
+    [
+      effectivePushDownDb,
+      effectiveTableOpsMode,
+      globalServerMode,
+      resolvedPerfOptions,
+      resolvedPreviewOptions,
+      setCells,
+      setDragOverCellId,
+      setResults,
+      setRunningCellId,
+      virtualizeOnMaximize,
+      virtRowHeight,
+    ],
   );
+
+  const leftPanelFlex = leftPanelCollapsed ? '0 0 48px' : '0 0 clamp(260px, 23vw, 320px)';
+  const rightPanelFlex = rightPanelCollapsed ? '0 0 48px' : '0 0 clamp(260px, 24vw, 340px)';
+  const collapsibleHeaderButtonStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    border: 'none',
+    background: 'transparent',
+    color: '#9ab5e9',
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    letterSpacing: 0.32,
+    textTransform: 'uppercase',
+    cursor: 'pointer',
+    padding: '2px 2px 4px',
+  };
 
   return (
     <StandaloneChrome title="Notebook Workbench">
@@ -1475,167 +1914,372 @@ export default function NotebookWorkbench({
         style={{
           flex: 1,
           display: 'flex',
-          gap: 24,
-          padding: 28,
+          gap: 20,
+          padding: '24px 24px 20px',
           background: '#0d111a',
           color: '#f1f6ff',
           minHeight: 0,
           boxSizing: 'border-box',
+          overflow: 'hidden',
         }}
       >
-        <aside
+        <div
           style={{
-            width: 280,
-            background: 'rgba(13,18,28,0.85)',
-            border: '1px solid rgba(40,58,84,0.6)',
-            borderRadius: 12,
-            padding: '16px 14px',
-            boxShadow: '0 18px 32px rgba(0,0,0,0.35)',
+            flex: leftPanelFlex,
             display: 'flex',
             flexDirection: 'column',
-            gap: 16,
+            background: 'rgba(13,18,28,0.88)',
+            border: '1px solid rgba(40,58,84,0.6)',
+            borderRadius: 12,
+            boxShadow: '0 18px 32px rgba(0,0,0,0.35)',
+            overflow: 'hidden',
+            transition: 'flex-basis 0.2s ease',
+            minHeight: 0,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setLeftPanelCollapsed((prev) => !prev)}
+            aria-expanded={!leftPanelCollapsed}
+            style={{
+              padding: leftPanelCollapsed ? '12px 8px' : '10px 12px',
+              border: 'none',
+              borderBottom: '1px solid rgba(40,58,84,0.6)',
+              background: 'rgba(12,18,28,0.95)',
+              color: '#8fb1ff',
+              fontSize: leftPanelCollapsed ? '1.1rem' : '0.82rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: leftPanelCollapsed ? 'center' : 'space-between',
+              cursor: 'pointer',
+              gap: 8,
+            }}
+          >
+            {leftPanelCollapsed ? (
+              <span style={{ lineHeight: 1 }}>»</span>
+            ) : (
+              <>
+                <span style={{ letterSpacing: 0.4 }}>Data Sources</span>
+                <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>«</span>
+              </>
+            )}
+          </button>
+          {!leftPanelCollapsed && (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '16px 14px',
+                overflowY: 'auto',
+                overflowX: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  border: '1px solid rgba(40,58,84,0.6)',
+                  borderRadius: 10,
+                  background: 'rgba(18,24,36,0.9)',
+                  padding: '12px 12px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label htmlFor="workbench-model-select" style={{ fontSize: '0.8rem', color: '#d4e2ff', fontWeight: 600 }}>Model</label>
+                  <select
+                    id="workbench-model-select"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(60,88,130,0.8)',
+                      background: 'rgba(18,24,32,0.9)',
+                      color: '#f2f6ff',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
+                    }}
+                  >
+                    <option value="None">None</option>
+                    <option value="dbLLM">Deutsche Bank - dbLLM</option>
+                    <option value="llama3.2:1b">LLaMA3.2:1b</option>
+                    <option value="codellama:7b-instruct">CodeLLaMA:7b-instruct</option>
+                    <option value="sqlcoder">SQLCoder:7b</option>
+                    <option value="gemma">Gemma</option>
+                    <option value="llama3">LLaMA3</option>
+                    <option value="mistral">Mistral</option>
+                    <option value="phi3">Phi-3</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label htmlFor="workbench-agent-select" style={{ fontSize: '0.8rem', color: '#d4e2ff', fontWeight: 600 }}>Agent</label>
+                  <select
+                    id="workbench-agent-select"
+                    value={agent}
+                    onChange={(e) => setAgent(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(60,88,130,0.8)',
+                      background: 'rgba(18,24,32,0.9)',
+                      color: '#f2f6ff',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
+                    }}
+                  >
+                    <option value="direct">Developer Assistant</option>
+                    <option value="database">Database - Direct Intent Routes</option>
+                    <option value="database1">Database - Direct Intent embeded nomodel Routes</option>
+                    <option value="restful">API Assistant (Trained)</option>
+                    <option value="langchain">Database Assistant (Un-Trained)</option>
+                    <option value="langchainprompt">Database Assistant (Partially Trained)</option>
+                    <option value="embedded">Database Assistant (Fully Trained)</option>
+                    <option value="webscrape">Documentation Assistant</option>
+                    <option value="riskdata">Data Analysis Assistant</option>
+                    <option value="embedded_narrated">Database Assistant with Narration</option>
+                    <option value="generic_rag">Database Assistant - Generic RAG</option>
+                  </select>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid rgba(40,58,84,0.6)',
+                  borderRadius: 10,
+                  background: 'rgba(18,24,36,0.9)',
+                  padding: '12px 12px 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  minHeight: 0,
+                  flex: savedViewsCollapsed ? '0 0 auto' : '1 1 0%',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSavedViewsCollapsed((prev) => !prev)}
+                  style={collapsibleHeaderButtonStyle}
+                  aria-expanded={!savedViewsCollapsed}
+                >
+                  <span>Saved Views</span>
+                  <span style={{ fontSize: '0.82rem', lineHeight: 1 }}>{savedViewsCollapsed ? '▸' : '▾'}</span>
+                </button>
+                {!savedViewsCollapsed && (
+                  <>
+                    <div style={{ fontSize: '0.7rem', color: '#92a8c7' }}>
+                      Quickly reopen curated worksheets to feed the notebook.
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        paddingRight: 4,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      {loadingViews ? (
+                        <div style={{ color: '#9db6d8', fontSize: '0.82rem' }}>Loading views…</div>
+                      ) : viewsError ? (
+                        <div style={{ color: '#e89aa9', fontSize: '0.82rem' }}>{viewsError}</div>
+                      ) : savedViews.length === 0 ? (
+                        <div style={{ color: '#8396b2', fontSize: '0.82rem' }}>No saved views yet.</div>
+                      ) : (
+                        savedViews.map((view) => {
+                          const title = view.viewName || view.name || 'Untitled view';
+                          const handleOpen = () => {
+                            try {
+                              const params = new URLSearchParams({ page: 'worksheet-viewer' });
+                              if (view.viewName) params.set('pinnedId', view.viewName);
+                              window.open(`${window.location.pathname}?${params.toString()}`, '_blank', 'noopener');
+                            } catch {}
+                          };
+                          return (
+                          <button
+                            key={`${view.viewName || view.name || view.id}`}
+                            type="button"
+                            onClick={handleOpen}
+                            draggable
+                            onDragStart={(event) => handleSavedViewDragStart(event, view)}
+                            onMouseEnter={(event) => handlePanelItemHover(event, true)}
+                            onMouseLeave={(event) => handlePanelItemHover(event, false)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '8px 10px',
+                              borderRadius: 9,
+                              border: 'none',
+                              background: 'rgba(18,28,44,0.25)',
+                              color: '#f0f6ff',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              fontSize: '0.72rem',
+                              transition: 'background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                            }}
+                          >
+                            <img src={worksheetIcon} alt="" aria-hidden="true" style={{ width: 12, height: 12 }} />
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+                          </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid rgba(40,58,84,0.6)',
+                  borderRadius: 10,
+                  background: 'rgba(18,24,36,0.9)',
+                  padding: '12px 12px 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  minHeight: 0,
+                  flex: csvCollapsed ? '0 0 auto' : '1 1 0%',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setCsvCollapsed((prev) => !prev)}
+                  style={collapsibleHeaderButtonStyle}
+                  aria-expanded={!csvCollapsed}
+                >
+                  <span>CSV Tables</span>
+                  <span style={{ fontSize: '0.82rem', lineHeight: 1 }}>{csvCollapsed ? '▸' : '▾'}</span>
+                </button>
+                {!csvCollapsed && (
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      overflowY: 'auto',
+                      overflowX: 'hidden',
+                      paddingRight: 4,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    {csvLoading ? (
+                      <div style={{ color: '#9db6d8', fontSize: '0.82rem' }}>Loading CSV tables…</div>
+                    ) : csvError ? (
+                      <div style={{ color: '#e89aa9', fontSize: '0.82rem' }}>{csvError}</div>
+                    ) : csvEntries.length === 0 ? (
+                      <div style={{ color: '#8396b2', fontSize: '0.82rem' }}>No CSV tables available.</div>
+                    ) : (
+                      csvEntries.map((entry) => {
+                        const entryId = entry.id ?? entry.entryId ?? entry.entry_id;
+                        const name = entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || (entryId ? `CSV ${entryId}` : 'CSV Table');
+                        return (
+                          <button
+                            key={`${entryId || name}`}
+                            type="button"
+                            draggable
+                            onDragStart={(event) => handleCsvDragStart(event, entry)}
+                            onMouseEnter={(event) => handlePanelItemHover(event, true)}
+                            onMouseLeave={(event) => handlePanelItemHover(event, false)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '7px 9px',
+                              borderRadius: 9,
+                              border: 'none',
+                              background: 'rgba(18,28,44,0.25)',
+                              color: '#f0f6ff',
+                              cursor: 'grab',
+                              textAlign: 'left',
+                              fontSize: '0.72rem',
+                              transition: 'background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: 20,
+                                height: 16,
+                                borderRadius: 6,
+                                background: 'rgba(90,140,255,0.15)',
+                                border: '1px solid rgba(90,140,255,0.35)',
+                                color: '#c8d8ff',
+                                fontSize: '0.64rem',
+                                fontWeight: 700,
+                                letterSpacing: 0.6,
+                              }}
+                            >
+                              CSV
+                            </span>
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            flex: '1 1 0%',
+            display: 'flex',
+            flexDirection: 'column',
+            paddingRight: 4,
+            minHeight: 0,
             overflow: 'hidden',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label htmlFor="workbench-model-select" style={{ fontSize: '0.8rem', color: '#d4e2ff', fontWeight: 600 }}>Model</label>
-              <select
-                id="workbench-model-select"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid rgba(60,88,130,0.8)',
-                  background: 'rgba(18,24,32,0.9)',
-                  color: '#f2f6ff',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
-                }}
-              >
-                <option value="None">None</option>
-                <option value="dbLLM">Deutsche Bank - dbLLM</option>
-                <option value="llama3.2:1b">LLaMA3.2:1b</option>
-                <option value="codellama:7b-instruct">CodeLLaMA:7b-instruct</option>
-                <option value="sqlcoder">SQLCoder:7b</option>
-                <option value="gemma">Gemma</option>
-                <option value="llama3">LLaMA3</option>
-                <option value="mistral">Mistral</option>
-                <option value="phi3">Phi-3</option>
-              </select>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label htmlFor="workbench-agent-select" style={{ fontSize: '0.8rem', color: '#d4e2ff', fontWeight: 600 }}>Agent</label>
-              <select
-                id="workbench-agent-select"
-                value={agent}
-                onChange={(e) => setAgent(e.target.value)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid rgba(60,88,130,0.8)',
-                  background: 'rgba(18,24,32,0.9)',
-                  color: '#f2f6ff',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
-                }}
-              >
-                <option value="direct">Developer Assistant</option>
-                <option value="database">Database - Direct Intent Routes</option>
-                <option value="database1">Database - Direct Intent embeded nomodel Routes</option>
-                <option value="restful">API Assistant (Trained)</option>
-                <option value="langchain">Database Assistant (Un-Trained)</option>
-                <option value="langchainprompt">Database Assistant (Partially Trained)</option>
-                <option value="embedded">Database Assistant (Fully Trained)</option>
-                <option value="webscrape">Documentation Assistant</option>
-                <option value="riskdata">Data Analysis Assistant</option>
-                <option value="embedded_narrated">Database Assistant with Narration</option>
-                <option value="generic_rag">Database Assistant - Generic RAG</option>
-              </select>
-            </div>
-          </div>
-
-          <div style={{ height: 1, background: 'rgba(56,74,104,0.6)', margin: '4px 0' }} />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src={worksheetIcon} alt="" aria-hidden="true" style={{ width: 20, height: 20 }} />
-            <h2 style={{ margin: 0, fontSize: '1.05rem', color: '#eef5ff' }}>Saved Views</h2>
-          </div>
-          <div style={{ fontSize: '0.78rem', color: '#92a8c7' }}>
-            Quickly reopen curated worksheets to feed the notebook.
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {loadingViews ? (
-              <div style={{ color: '#9db6d8', fontSize: '0.82rem' }}>Loading views…</div>
-            ) : viewsError ? (
-              <div style={{ color: '#e89aa9', fontSize: '0.82rem' }}>{viewsError}</div>
-            ) : savedViews.length === 0 ? (
-              <div style={{ color: '#8396b2', fontSize: '0.82rem' }}>No saved views yet.</div>
-            ) : (
-              savedViews.map((view) => {
-                const title = view.viewName || view.name || 'Untitled view';
-                const handleOpen = () => {
-                  try {
-                    const params = new URLSearchParams({ page: 'worksheet-viewer' });
-                    if (view.viewName) params.set('pinnedId', view.viewName);
-                    window.open(`${window.location.pathname}?${params.toString()}`, '_blank', 'noopener');
-                  } catch {}
-                };
-                return (
-                  <button
-                    key={`${view.viewName || view.name || view.id}`}
-                    type="button"
-                    onClick={handleOpen}
-                    draggable
-                    onDragStart={(event) => handleSavedViewDragStart(event, view)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: '1px solid rgba(48,66,98,0.6)',
-                      background: 'rgba(18,28,44,0.55)',
-                      color: '#f0f6ff',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontSize: '0.9rem',
-                    }}
-                  >
-                    <img src={worksheetIcon} alt="" aria-hidden="true" style={{ width: 18, height: 18 }} />
-                    <span style={{ flex: 1 }}>{title}</span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </aside>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, overflowY: 'auto', paddingRight: 4, flex: 1 }}>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              paddingRight: 2,
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {cells.map((cell) => {
-            const height = cell.type === 'text' ? 160 : 220;
+            const height = cell.type === 'text' ? 140 : 180;
             const isCollapsed = !!cell.collapsed;
             const dfLabel = cell.dfName ? `DataFrame: ${cell.dfName}` : 'No dataframe yet';
-            const isDragTarget = cell.type === 'text' && dragOverCellId === cell.id;
+            const isDroppableCell = cell.type === 'text' || cell.type === 'python';
+            const isDragTarget = isDroppableCell && dragOverCellId === cell.id;
             const outputWrapperStyleBase = {
               marginTop: 12,
-              border: '1px solid rgba(56,74,104,0.6)',
-              borderRadius: 10,
-              padding: '10px 12px',
+                  border: '1px solid rgba(56,74,104,0.55)',
+                  borderRadius: 9,
+                  padding: '8px 10px',
               background: 'rgba(18,24,36,0.85)',
               display: 'flex',
               flexDirection: 'column',
               gap: 8,
             };
             const outputWrapperStyle = cell.outputTableProps
-              ? { ...outputWrapperStyleBase, maxHeight: 520, minHeight: 260, overflow: 'auto' }
-              : { ...outputWrapperStyleBase, maxHeight: 260, overflow: 'auto' };
+              ? { ...outputWrapperStyleBase, maxHeight: 460, minHeight: 220, overflow: 'auto' }
+              : { ...outputWrapperStyleBase, maxHeight: 220, overflow: 'auto' };
             const outputContainerStyle = cell.outputTableProps
-              ? { height: 380, overflow: 'auto', paddingRight: 4 }
-              : { maxHeight: 180, overflow: 'auto', paddingRight: 4 };
+              ? { height: 320, overflow: 'auto', paddingRight: 3 }
+              : { maxHeight: 150, overflow: 'auto', paddingRight: 3 };
 
             if (isCollapsed) {
               return (
@@ -1658,7 +2302,7 @@ export default function NotebookWorkbench({
                   onDragEnter={(event) => handleCellDragEnter(event, cell)}
                   onDragOver={(event) => handleCellDragOver(event, cell)}
                   onDragLeave={(event) => handleCellDragLeave(event, cell)}
-                  onDropCapture={(event) => handleSavedViewDrop(event, cell)}
+                  onDropCapture={(event) => handlePanelItemDrop(event, cell)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
                     <button
@@ -1731,7 +2375,7 @@ export default function NotebookWorkbench({
                 onDragEnter={(event) => handleCellDragEnter(event, cell)}
                 onDragOver={(event) => handleCellDragOver(event, cell)}
                 onDragLeave={(event) => handleCellDragLeave(event, cell)}
-                onDropCapture={(event) => handleSavedViewDrop(event, cell)}
+                onDropCapture={(event) => handlePanelItemDrop(event, cell)}
               >
                 <div
                   style={{
@@ -1764,7 +2408,6 @@ export default function NotebookWorkbench({
                     >
                       <option value="text">NLP</option>
                       <option value="python">Python</option>
-                      <option value="sql">SQL</option>
                     </select>
                     <button
                       type="button"
@@ -1826,14 +2469,14 @@ export default function NotebookWorkbench({
                   <span style={{ fontSize: '0.78rem', color: '#7ea2d8' }}>{dfLabel}</span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300, overflowY: 'auto', paddingRight: 3 }}>
                   <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14 }}>
                     <div>
                       <h2 style={{ margin: '8px 0 4px', fontSize: '1.1rem', color: '#f5f9ff' }}>{cell.title}</h2>
                       <span style={{ fontSize: '0.8rem', color: '#8da8cc' }}>{cell.placeholder}</span>
                     </div>
                   </header>
-                  <div style={{ border: '1px solid #202c44', borderRadius: 10, overflow: 'hidden' }}>
+                  <div style={{ border: '1px solid #202c44', borderRadius: 9, overflow: 'hidden' }}>
                     <Editor
                       height={height}
                       language={cell.language}
@@ -1894,7 +2537,7 @@ export default function NotebookWorkbench({
                   </div>
                 )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
                   <button
                     type="button"
                     onClick={() => runCell(cell)}
@@ -1968,51 +2611,136 @@ export default function NotebookWorkbench({
               </section>
             );
           })}
-    </div>
-
-        <section style={{ ...cardStyle, border: '1px solid #2c3b58', marginBottom: 12 }}>
-          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>NotebookSLM</h2>
-            <span style={{ fontSize: '0.75rem', color: '#8da8cc' }}>Use names in downstream scripts</span>
-          </header>
-
-          <div style={{ border: '1px solid #26324a', borderRadius: 10, padding: 12, background: 'rgba(18,24,36,0.9)', display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflow: 'auto' }}>
-            <div style={{ fontSize: '0.82rem', color: '#9db8e6' }}>Active dataframe: <span style={{ color: '#eef4ff', fontWeight: 600 }}>{results.activeDataFrameName || '—'}</span></div>
-            <div style={{ fontSize: '0.78rem', color: '#7fa2d1' }}>Available:</div>
-            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {Object.entries(results.dataFrames || {}).map(([name, data]) => (
-                <li key={name} style={{ color: '#d5e4ff', fontSize: '0.82rem' }}>
-                  {name} <span style={{ color: '#7fa2d1' }}>({Array.isArray(data) ? data.length : 0} rows)</span>
-                </li>
-              ))}
-            </ul>
+            </div>
           </div>
-
-          <div style={{
-            border: '1px solid #26324a',
-            borderRadius: 10,
-            padding: 12,
-            background: 'rgba(18,24,36,0.9)',
-            height: 180,
+        </div>
+        <div
+          style={{
+            flex: rightPanelFlex,
             display: 'flex',
             flexDirection: 'column',
-            gap: 6,
-          }}>
-            <div style={{
-              fontSize: '0.8rem',
-              color: '#7fa2d1',
-            }}>
-              Execution Log
-            </div>
-            <div style={{ flex: 1, overflowX: 'hidden', overflowY: 'auto', paddingRight: 6 }}>
-              <ul style={{ margin: 0, paddingLeft: 18, color: '#d5e4ff', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', width: '100%' }}>
-                {results.logs.map((line, idx) => (
-                  <li key={`${line}-${idx}`}>{line}</li>
-                ))}
-              </ul>
-            </div>
+            background: 'rgba(13,18,28,0.88)',
+            border: '1px solid rgba(40,58,84,0.6)',
+            borderRadius: 12,
+            boxShadow: '0 18px 32px rgba(0,0,0,0.35)',
+            overflow: 'hidden',
+            transition: 'flex-basis 0.2s ease',
+            minHeight: 0,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setRightPanelCollapsed((prev) => !prev)}
+            aria-expanded={!rightPanelCollapsed}
+            style={{
+              padding: rightPanelCollapsed ? '10px 8px' : '10px 12px',
+              border: 'none',
+              borderBottom: '1px solid rgba(40,58,84,0.6)',
+              background: 'rgba(12,18,28,0.95)',
+              color: '#8fb1ff',
+              fontSize: rightPanelCollapsed ? '0.74rem' : '0.82rem',
+              fontWeight: 600,
+              display: 'flex',
+              flexDirection: rightPanelCollapsed ? 'column' : 'row',
+              alignItems: 'center',
+              justifyContent: rightPanelCollapsed ? 'center' : 'space-between',
+              cursor: 'pointer',
+              gap: rightPanelCollapsed ? 6 : 8,
+              textAlign: 'center',
+            }}
+          >
+            {rightPanelCollapsed ? (
+              <>
+                <span
+                  style={{
+                    letterSpacing: 0.3,
+                    fontSize: '0.72rem',
+                    lineHeight: 1.1,
+                    writingMode: 'vertical-rl',
+                    transform: 'rotate(180deg)',
+                    textTransform: 'uppercase',
+                    color: '#9fb6ff',
+                  }}
+                >
+                  NotebookSLM
+                </span>
+                <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>«</span>
+              </>
+            ) : (
+              <>
+                <span style={{ letterSpacing: 0.4 }}>Notebook SLM</span>
+                <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>»</span>
+              </>
+            )}
+          </button>
+          <div
+            style={{
+              flex: rightPanelCollapsed ? '0 0 auto' : 1,
+              minHeight: 0,
+              padding: rightPanelCollapsed ? '6px 6px 10px' : '16px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              transition: 'padding 0.2s ease',
+            }}
+          >
+            <section
+              style={{
+                ...cardStyle,
+                border: '1px solid #2c3b58',
+                marginBottom: 0,
+                flex: rightPanelCollapsed ? '0 0 auto' : 1,
+                minHeight: rightPanelCollapsed ? 'auto' : 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: rightPanelCollapsed ? 'visible' : 'hidden',
+                transition: 'flex 0.2s ease, max-height 0.2s ease',
+              }}
+            >
+              <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>NotebookSLM</h2>
+                <span style={{ fontSize: '0.75rem', color: '#8da8cc' }}>Use names in downstream scripts</span>
+              </header>
+
+              {!rightPanelCollapsed && (
+                <>
+                  <div style={{ border: '1px solid #26324a', borderRadius: 10, padding: 12, background: 'rgba(18,24,36,0.9)', display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflow: 'auto' }}>
+                    <div style={{ fontSize: '0.82rem', color: '#9db8e6' }}>Active dataframe: <span style={{ color: '#eef4ff', fontWeight: 600 }}>{results.activeDataFrameName || '—'}</span></div>
+                    <div style={{ fontSize: '0.78rem', color: '#7fa2d1' }}>Available:</div>
+                    <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {Object.entries(results.dataFrames || {}).map(([name, data]) => (
+                        <li key={name} style={{ color: '#d5e4ff', fontSize: '0.82rem' }}>
+                          {name} <span style={{ color: '#7fa2d1' }}>({Array.isArray(data) ? data.length : 0} rows)</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div style={{
+                    border: '1px solid #26324a',
+                    borderRadius: 10,
+                    padding: 12,
+                    background: 'rgba(18,24,36,0.9)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    flex: 1,
+                    minHeight: 0,
+                  }}>
+                    <div style={{ fontSize: '0.8rem', color: '#7fa2d1' }}>Execution Log</div>
+                    <div style={{ flex: 1, overflowX: 'auto', overflowY: 'auto', paddingRight: 6 }}>
+                      <ul style={{ margin: 0, paddingLeft: 18, color: '#d5e4ff', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', width: '100%' }}>
+                        {results.logs.map((line, idx) => (
+                          <li key={`${line}-${idx}`}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
           </div>
-        </section>
+        </div>
       </div>
     </StandaloneChrome>
   );
