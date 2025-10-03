@@ -9,6 +9,7 @@ import copyIcon from '../icons/copy.svg';
 import addCellIcon from '../icons/add_cell.svg';
 import removeCellIcon from '../icons/remove_cell.svg';
 import worksheetIcon from '../icons/worksheet_viewer.svg';
+import csvIcon from '../icons/csv.svg';
 
 const baseTable = [
   { region: 'North', revenue: 125000, growth: 12 },
@@ -305,6 +306,465 @@ const cleanStreamText = (value) => {
   }
 };
 
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const buildTablePreviewHtml = (tableProps) => {
+  if (!tableProps || !Array.isArray(tableProps.data)) return '';
+  const rows = tableProps.data.slice(0, 100);
+  if (!rows.length) return '';
+  const columns = Array.from(
+    rows.reduce((set, row) => {
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        Object.keys(row).forEach((key) => set.add(key));
+      }
+      return set;
+    }, new Set()),
+  );
+  const headerHtml = columns
+    .map((col) => `<th>${escapeHtml(col)}</th>`)
+    .join('');
+  const bodyHtml = rows
+    .map((row) => {
+      if (row && typeof row === 'object' && !Array.isArray(row)) {
+        return `<tr>${columns.map((col) => `<td>${escapeHtml(row[col])}</td>`).join('')}</tr>`;
+      }
+      return `<tr><td>${escapeHtml(row)}</td></tr>`;
+    })
+    .join('');
+  const note = tableProps.data.length > rows.length ? `<div class="note">Showing first ${rows.length} of ${tableProps.data.length} rows.</div>` : '';
+  return `
+    <section class="panel-section">
+      <h3>Tabular Output</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>${headerHtml}</tr></thead>
+          <tbody>${bodyHtml}</tbody>
+        </table>
+      </div>
+      ${note}
+    </section>
+  `;
+};
+
+const buildFiguresHtml = (figures) => {
+  if (!Array.isArray(figures) || !figures.length) return '';
+  const blocks = figures
+    .map((fig, index) => {
+      if (!fig || !fig.image) return '';
+      const caption = fig.name ? escapeHtml(fig.name) : `Figure ${index + 1}`;
+      return `
+        <figure class="figure">
+          <img src="data:image/png;base64,${fig.image}" alt="${caption}" />
+          <figcaption>${caption}</figcaption>
+        </figure>
+      `;
+    })
+    .join('');
+  return `
+    <section class="panel-section">
+      <h3>Figures</h3>
+      <div class="figures">${blocks}</div>
+    </section>
+  `;
+};
+
+const buildGenericOutputHtml = (cell) => {
+  const blocks = [];
+  if (cell.outputRaw) {
+    blocks.push(`
+      <section class="panel-section">
+        <h3>Text Output</h3>
+        <pre class="code-block">${escapeHtml(cell.outputRaw)}</pre>
+      </section>
+    `);
+  }
+  const data = Array.isArray(cell.outputData) ? cell.outputData : [];
+  if (!cell.outputTableProps && data.length) {
+    const preview = escapeHtml(JSON.stringify(data.slice(0, 20), null, 2));
+    blocks.push(`
+      <section class="panel-section">
+        <h3>Data Preview</h3>
+        <pre class="code-block">${preview}</pre>
+      </section>
+    `);
+  }
+  if (!blocks.length) {
+    blocks.push('<section class="panel-section"><div class="empty">No output captured yet.</div></section>');
+  }
+  return blocks.join('');
+};
+
+const buildMaximizedPageHtml = (cell) => {
+  const codeLabel = cell.type === 'python' ? 'Python' : cell.type === 'text' ? 'Prompt' : cell.type === 'sql' ? 'SQL' : 'Editor';
+  const languageClass = (() => {
+    if (cell?.language) return String(cell.language).toLowerCase();
+    if (cell?.type === 'python') return 'python';
+    if (cell?.type === 'sql') return 'sql';
+    if (cell?.type === 'text') return 'markdown';
+    return 'plaintext';
+  })();
+  const escapedContent = escapeHtml(cell.content || '');
+  const tableHtml = cell.outputTableProps ? buildTablePreviewHtml(cell.outputTableProps) : '';
+  const figuresHtml = buildFiguresHtml(cell.outputFigures);
+  const genericHtml = buildGenericOutputHtml(cell);
+  const metadata = [
+    cell.dfName ? `<div><span>DataFrame</span><strong>${escapeHtml(cell.dfName)}</strong></div>` : '',
+    `<div><span>Mode</span><strong>${cell.type ? cell.type.toUpperCase() : 'UNKNOWN'}</strong></div>`,
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const outputHtml = [tableHtml, figuresHtml, genericHtml].filter(Boolean).join('');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(cell.title || 'Notebook Cell')} · Maximize</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css" integrity="sha512-8ncNehJIK/gY/SiAj+QIrbOOgqX7FnGk3REScLf36ToYPpIk79gdn7nc6FwQLKZoCxJqxNd9wVF6dFTqgCSw9g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+        background: #1e1e1e;
+        color: #e7e7e7;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        height: 36px;
+        background: linear-gradient(90deg, #0f4c75, #1b262c);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        font-size: 0.85rem;
+        letter-spacing: 0.3px;
+      }
+      header span {
+        opacity: 0.8;
+        margin-left: 8px;
+      }
+      .workspace {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      .activity-bar {
+        width: 48px;
+        background: #252526;
+        border-right: 1px solid rgba(255,255,255,0.04);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px 0;
+        gap: 16px;
+        font-size: 0.9rem;
+        color: rgba(255,255,255,0.4);
+      }
+      .sidebar {
+        width: 220px;
+        background: #1f2430;
+        border-right: 1px solid rgba(255,255,255,0.04);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .sidebar h2 {
+        margin: 0;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        color: #9db4ff;
+      }
+      .sidebar .meta {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-size: 0.78rem;
+      }
+      .sidebar .meta div {
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+        color: rgba(231,231,231,0.85);
+      }
+      .sidebar .meta span {
+        color: rgba(231,231,231,0.5);
+      }
+      .sidebar .tip {
+        margin-top: auto;
+        font-size: 0.75rem;
+        color: rgba(255,255,255,0.55);
+        line-height: 1.4;
+      }
+      .main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .tab-bar {
+        height: 34px;
+        background: #2d2d2d;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+        font-size: 0.8rem;
+      }
+      .tab {
+        padding: 6px 12px;
+        border-radius: 6px 6px 0 0;
+        background: #1e1e1e;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-bottom: none;
+        color: #c6d4ff;
+      }
+      .panels {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      .panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: #1e1e1e;
+        border-right: 1px solid rgba(255,255,255,0.04);
+      }
+      .panel:last-child {
+        border-right: none;
+      }
+      .panel-header {
+        height: 32px;
+        padding: 0 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 0.78rem;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #9db4ff;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+      }
+      .panel-content {
+        flex: 1;
+        overflow: auto;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .code-editor {
+        background: #1d1f24;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+      }
+      .code-editor pre {
+        margin: 0;
+        overflow: auto;
+      }
+      .code-editor code {
+        display: block;
+        font-family: 'Fira Code', 'Source Code Pro', monospace;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        white-space: pre;
+      }
+      .command-bar {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .command-bar button {
+        background: #0e639c;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+        font-size: 0.78rem;
+        cursor: pointer;
+      }
+      .command-bar button.secondary {
+        background: #3a3d41;
+        color: rgba(255,255,255,0.85);
+      }
+      .command-bar button:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+      .panel-section h3 {
+        margin: 0 0 8px;
+        font-size: 0.9rem;
+        color: #c6d4ff;
+      }
+      .panel-section .note {
+        margin-top: 8px;
+        font-size: 0.75rem;
+        color: rgba(255,255,255,0.6);
+      }
+      .table-wrapper {
+        overflow: auto;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 6px;
+        max-height: 360px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+      thead {
+        background: rgba(30, 64, 120, 0.35);
+      }
+      th, td {
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        text-align: left;
+      }
+      tr:nth-child(even) td {
+        background: rgba(255,255,255,0.03);
+      }
+      .code-block {
+        background: rgba(15,20,30,0.9);
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: 'Fira Code', 'Source Code Pro', monospace;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+      }
+      .empty {
+        padding: 16px;
+        background: rgba(255,255,255,0.03);
+        border-radius: 6px;
+        color: rgba(255,255,255,0.6);
+      }
+      .figures {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+      .figure {
+        margin: 0;
+        background: rgba(255,255,255,0.03);
+        border-radius: 6px;
+        padding: 10px;
+        border: 1px solid rgba(255,255,255,0.04);
+      }
+      .figure img {
+        width: 100%;
+        display: block;
+        border-radius: 4px;
+      }
+      .figure figcaption {
+        margin-top: 6px;
+        font-size: 0.75rem;
+        color: rgba(255,255,255,0.65);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>${escapeHtml(cell.title || 'Notebook Cell')}</strong>
+      <span>Maximized view</span>
+    </header>
+    <div class="workspace">
+      <nav class="activity-bar">
+        <div>●</div>
+        <div>●</div>
+        <div>●</div>
+      </nav>
+      <aside class="sidebar">
+        <h2>Details</h2>
+        <div class="meta">
+          ${metadata || '<div><span>Status</span><strong>Ready</strong></div>'}
+          <div><span>Cell ID</span><strong>${escapeHtml(cell.id || '')}</strong></div>
+        </div>
+        <div class="tip">
+          Use this window for focused editing. Changes here are for reference; return to the main notebook to execute.
+        </div>
+      </aside>
+      <section class="main">
+        <div class="tab-bar">
+          <div class="tab">${escapeHtml(cell.title || 'Cell')}</div>
+        </div>
+        <div class="panels">
+          <section class="panel">
+            <div class="panel-header">
+              <span>${escapeHtml(codeLabel)} Editor</span>
+              <div class="command-bar">
+                <button id="run-button" type="button">Run Cell</button>
+                <button id="close-button" class="secondary" type="button">Close</button>
+              </div>
+            </div>
+            <div class="panel-content">
+              <div class="code-editor">
+                <pre><code class="hljs language-${escapeHtml(languageClass)}">${escapedContent || '// Empty cell'}</code></pre>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <span>Execution Output</span>
+            </div>
+            <div class="panel-content">
+              ${outputHtml}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha512-ZUJ0uCwZ0pniS3pSke1Mt2rt7NmBGG99nmHn7+O+kO5OVwOB1p5MNDoAuCEi0aKBslZx2drXr/7EQo1leChX8w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      (function() {
+        try {
+          if (window.hljs && typeof window.hljs.highlightAll === 'function') {
+            window.hljs.highlightAll();
+          }
+        } catch (err) {
+          console.error(err);
+        }
+
+        const runButton = document.getElementById('run-button');
+        const closeButton = document.getElementById('close-button');
+        if (closeButton) {
+          closeButton.addEventListener('click', () => window.close());
+        }
+
+        const canRun = Boolean(window.opener && typeof window.opener.postMessage === 'function');
+        if (runButton) {
+          if (!canRun) {
+            runButton.disabled = true;
+            runButton.textContent = 'Run Unavailable';
+          } else {
+            runButton.addEventListener('click', () => {
+              window.opener.postMessage({ type: 'maximized-run', cellId: '${escapeHtml(cell.id)}' }, '*');
+            });
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>`;
+};
+
 const SAVED_VIEW_TOTAL_KEYS = [
   'totalRows', 'rowsTotal', 'rowCount', 'totalRowCount',
   'total_rows', 'rows_total', 'row_count',
@@ -478,6 +938,48 @@ export default function NotebookWorkbench({
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [savedViewsCollapsed, setSavedViewsCollapsed] = useState(false);
+  const [logWrapEnabled, setLogWrapEnabled] = useState(true);
+
+  const handleMaximizeCell = useCallback((targetCell) => {
+    if (!targetCell) return;
+    try {
+      const html = buildMaximizedPageHtml(targetCell);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const win = window.open('', '_blank');
+      if (!win) {
+        URL.revokeObjectURL(url);
+        window.alert('Unable to open the maximized view. Please check your browser pop-up settings.');
+        return;
+      }
+
+      const revoke = () => {
+        URL.revokeObjectURL(url);
+        win.removeEventListener('load', revoke);
+      };
+      win.addEventListener('load', revoke);
+      win.location = url;
+    } catch (error) {
+      console.error('Maximize cell failed', error);
+    }
+  }, []);
+
+  const handleExportLogs = useCallback(() => {
+    try {
+      const content = Array.isArray(results?.logs) ? results.logs.join('\n') : '';
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `notebook_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Log export failed', error);
+    }
+  }, [results?.logs]);
   const [csvCollapsed, setCsvCollapsed] = useState(false);
   const [csvEntries, setCsvEntries] = useState([]);
   const [csvLoading, setCsvLoading] = useState(false);
@@ -1206,6 +1708,21 @@ export default function NotebookWorkbench({
     },
     [agent, model, cells, results],
   );
+
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (!event || !event.data) return;
+      const { type, cellId } = event.data;
+      if (type === 'maximized-run' && cellId) {
+        const target = cells.find((cell) => cell.id === cellId);
+        if (target) {
+          runCell(target);
+        }
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [cells, runCell]);
 
   const updateCellContent = useCallback(
     (id, nextContent) => {
@@ -2042,7 +2559,7 @@ export default function NotebookWorkbench({
     ],
   );
 
-  const leftPanelFlex = leftPanelCollapsed ? '0 0 48px' : '0 0 clamp(260px, 23vw, 320px)';
+  const leftPanelFlex = leftPanelCollapsed ? '0 0 48px' : '0 0 clamp(210px, 18vw, 260px)';
   const rightPanelFlex = rightPanelCollapsed ? '0 0 48px' : '0 0 clamp(260px, 24vw, 340px)';
   const collapsibleHeaderButtonStyle = {
     display: 'flex',
@@ -2361,24 +2878,11 @@ export default function NotebookWorkbench({
                               transition: 'background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
                             }}
                           >
-                            <span
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                width: 20,
-                                height: 16,
-                                borderRadius: 6,
-                                background: 'rgba(90,140,255,0.15)',
-                                border: '1px solid rgba(90,140,255,0.35)',
-                                color: '#c8d8ff',
-                                fontSize: '0.64rem',
-                                fontWeight: 700,
-                                letterSpacing: 0.6,
-                              }}
-                            >
-                              CSV
-                            </span>
+                            <img
+                              src={csvIcon}
+                              alt="CSV"
+                              style={{ width: 14, height: 14, flex: '0 0 auto', filter: 'drop-shadow(0 0 2px rgba(80,150,255,0.2))' }}
+                            />
                             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                           </button>
                         );
@@ -2485,6 +2989,21 @@ export default function NotebookWorkbench({
                       ) : (
                         <img src={runIcon} alt="Run" style={{ width: 20, height: 20 }} />
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMaximizeCell(cell)}
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        padding: '4px 6px',
+                        cursor: 'pointer',
+                        color: '#6fc3ff',
+                        fontSize: '0.75rem',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Maximize
                     </button>
                     <button
                       type="button"
@@ -2603,6 +3122,22 @@ export default function NotebookWorkbench({
                       />
                       Inline output
                     </label>
+                    <button
+                      type="button"
+                      onClick={() => handleMaximizeCell(cell)}
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 6,
+                        color: '#6fc3ff',
+                        fontSize: '0.78rem',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Maximize
+                    </button>
                     <button
                       type="button"
                       onClick={() => toggleCollapse(cell.id)}
@@ -2876,13 +3411,55 @@ export default function NotebookWorkbench({
                     background: 'rgba(18,24,36,0.9)',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 6,
+                    gap: 8,
                     flex: 1,
                     minHeight: 0,
                   }}>
-                    <div style={{ fontSize: '0.8rem', color: '#7fa2d1' }}>Execution Log</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <span style={{ fontSize: '0.8rem', color: '#7fa2d1' }}>Execution Log</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: '#9fb6ff', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={logWrapEnabled}
+                            onChange={(event) => setLogWrapEnabled(event.target.checked)}
+                            style={{ accentColor: '#4c86ff' }}
+                          />
+                          Wrap lines
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleExportLogs}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#6fc3ff',
+                            textDecoration: 'underline',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            padding: 0,
+                          }}
+                        >
+                          Export log
+                        </button>
+                      </div>
+                    </div>
                     <div style={{ flex: 1, overflowX: 'auto', overflowY: 'auto', paddingRight: 6 }}>
-                      <ul style={{ margin: 0, paddingLeft: 18, color: '#d5e4ff', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', width: '100%' }}>
+                      <ul
+                        style={{
+                          margin: 0,
+                          paddingLeft: 18,
+                          color: '#d5e4ff',
+                          fontSize: '0.85rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 4,
+                          whiteSpace: logWrapEnabled ? 'pre-wrap' : 'pre',
+                          wordBreak: logWrapEnabled ? 'break-word' : 'normal',
+                          overflowWrap: logWrapEnabled ? 'anywhere' : 'normal',
+                          minWidth: logWrapEnabled ? 'auto' : 'min-content',
+                        }}
+                      >
                         {results.logs.map((line, idx) => (
                           <li key={`${line}-${idx}`}>{line}</li>
                         ))}
