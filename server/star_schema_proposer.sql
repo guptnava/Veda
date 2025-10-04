@@ -802,3 +802,6 @@ END;
 -- * It **doesn’t** choose SCD types; you decide (Type 1 vs 2) for changing attributes.
 
 -- If you want, I can extend it to **emit DDL** for the proposed dimensions/fact (with SCD options) based on the latest run.
+
+
+ //line 134:   const [objectsCollapsed, setObjectsCollapsed] = useState(false);

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import StandaloneChrome from './StandaloneChrome';
@@ -155,6 +155,79 @@ const sanitizeName = (value) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
+const deriveColumnsForCsv = (rows, tableProps) => {
+  if (!Array.isArray(rows) || !rows.length) return [];
+
+  const explicitColumns = Array.isArray(tableProps?.columns) ? tableProps.columns : null;
+  if (explicitColumns?.length) return explicitColumns;
+
+  const explicitHeaders = Array.isArray(tableProps?.headers) ? tableProps.headers : null;
+  if (explicitHeaders?.length) return explicitHeaders;
+
+  const objectColumns = [];
+  let maxArrayLength = 0;
+
+  for (const row of rows) {
+    if (Array.isArray(row)) {
+      maxArrayLength = Math.max(maxArrayLength, row.length);
+      continue;
+    }
+    if (row && typeof row === 'object') {
+      for (const key of Object.keys(row)) {
+        if (IGNORED_META_KEYS.has(key)) continue;
+        if (!objectColumns.includes(key)) objectColumns.push(key);
+      }
+    }
+  }
+
+  if (objectColumns.length) return objectColumns;
+  if (maxArrayLength) {
+    return Array.from({ length: maxArrayLength }, (_, idx) => `column_${idx + 1}`);
+  }
+  return ['value'];
+};
+
+const encodeCsvValue = (value) => {
+  if (value == null) return '';
+  let normalized = value;
+  if (typeof normalized === 'object') {
+    try {
+      normalized = JSON.stringify(normalized);
+    } catch (err) {
+      normalized = String(normalized);
+    }
+  }
+  const stringValue = String(normalized);
+  if (/["\n,\r]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const buildCsvFromTableProps = (tableProps) => {
+  if (!tableProps) return null;
+  const rows = Array.isArray(tableProps.data) ? tableProps.data : [];
+  if (!rows.length) return null;
+
+  const columns = deriveColumnsForCsv(rows, tableProps);
+  if (!columns.length) return null;
+
+  const lines = [columns.map(encodeCsvValue).join(',')];
+
+  for (const row of rows) {
+    const values = columns.map((col, idx) => {
+      if (row == null) return '';
+      if (Array.isArray(row)) return row[idx];
+      if (row && typeof row === 'object') return row[col];
+      if (columns.length === 1) return row;
+      return '';
+    });
+    lines.push(values.map(encodeCsvValue).join(','));
+  }
+
+  return lines.join('\n');
+};
+
 const buildGraphExampleBlock = (dfVar, label) => `if plt is not None:
     try:
         numeric_cols = [col for col in ${dfVar}.select_dtypes(include=['number']).columns]
@@ -182,7 +255,7 @@ const buildPythonDataframeSnippet = ({
   const commentLine = `# ${commentParts.join(' | ')}`;
   const friendlyLabel = (dfName || safeName || 'Dataset').replace(/'/g, "\\'");
 
-  const importsBlock = `import os\nimport json\nimport requests\nimport pandas as pd\n\ntry:\n    import matplotlib\n    matplotlib.use('Agg')\n    import matplotlib.pyplot as plt\nexcept Exception:\n    plt = None\n\nAPI_BASE_URL = os.getenv("VEDA_API_BASE", "http://localhost:3000")\nAPI_TOKEN = os.getenv("VEDA_API_TOKEN")\n\n_session = requests.Session()\nif API_TOKEN:\n    _session.headers.update({"Authorization": f"Bearer {API_TOKEN}"})\n\n`;
+  const importsBlock = `import os\nimport json\nimport requests\nimport pandas as pd\nimport importlib\n\nmatplotlib = None\nplt = None\ntry:\n    matplotlib_spec = importlib.util.find_spec('matplotlib')\nexcept Exception:\n    matplotlib_spec = None\nif matplotlib_spec is not None:\n    try:\n        matplotlib = importlib.import_module('matplotlib')\n        matplotlib.use('Agg')\n        plt = importlib.import_module('matplotlib.pyplot')\n    except Exception:\n        matplotlib = None\n        plt = None\n\nAPI_BASE_URL = os.getenv("VEDA_API_BASE", "http://localhost:3000")\nAPI_TOKEN = os.getenv("VEDA_API_TOKEN")\n\n_session = requests.Session()\nif API_TOKEN:\n    _session.headers.update({"Authorization": f"Bearer {API_TOKEN}"})\n\n`;
 
   if (sourceType === 'csv' && csvMeta?.endpoint) {
     const endpoint = csvMeta.endpoint;
@@ -410,17 +483,23 @@ const buildMaximizedPageHtml = (cell) => {
     return 'plaintext';
   })();
   const escapedContent = escapeHtml(cell.content || '');
-  const tableHtml = cell.outputTableProps ? buildTablePreviewHtml(cell.outputTableProps) : '';
-  const figuresHtml = buildFiguresHtml(cell.outputFigures);
-  const genericHtml = buildGenericOutputHtml(cell);
-  const metadata = [
+  const isPythonCell = cell.type === 'python';
+  const codeEditorHtml = isPythonCell
+    ? `<div id="code-editor-host" class="code-editor-host">${escapedContent || ''}</div>`
+    : `<pre><code class="hljs language-${escapeHtml(languageClass)}">${escapedContent || '// Empty cell'}</code></pre>`;
+  const metadataEntries = [
     cell.dfName ? `<div><span>DataFrame</span><strong>${escapeHtml(cell.dfName)}</strong></div>` : '',
-    `<div><span>Mode</span><strong>${cell.type ? cell.type.toUpperCase() : 'UNKNOWN'}</strong></div>`,
-  ]
-    .filter(Boolean)
-    .join('');
-
-  const outputHtml = [tableHtml, figuresHtml, genericHtml].filter(Boolean).join('');
+    `<div><span>Mode</span><strong>${escapeHtml(cell.type ? cell.type.toUpperCase() : 'UNKNOWN')}</strong></div>`,
+  ].filter(Boolean);
+  const metadataHtml = [
+    metadataEntries.length ? metadataEntries.join('') : '<div><span>Status</span><strong>Ready</strong></div>',
+    `<div><span>Cell ID</span><strong>${escapeHtml(cell.id || '')}</strong></div>`,
+  ].join('');
+  const initialOutputHtml = '<section class="panel-section"><div class="empty">Run this cell here to capture fresh output.</div></section>';
+  const runButtonLabel = isPythonCell ? 'Run Python' : 'Run Cell';
+  const sidebarTip = isPythonCell
+    ? 'Edit and execute Python in this window. Results stay here for review.'
+    : 'Use this window for focused editing. Return to the notebook to execute.';
 
   return `<!doctype html>
 <html lang="en">
@@ -430,9 +509,7 @@ const buildMaximizedPageHtml = (cell) => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css" integrity="sha512-8ncNehJIK/gY/SiAj+QIrbOOgqX7FnGk3REScLf36ToYPpIk79gdn7nc6FwQLKZoCxJqxNd9wVF6dFTqgCSw9g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
-      :root {
-        color-scheme: dark;
-      }
+      :root { color-scheme: dark; }
       * { box-sizing: border-box; }
       body {
         margin: 0;
@@ -452,15 +529,8 @@ const buildMaximizedPageHtml = (cell) => {
         font-size: 0.85rem;
         letter-spacing: 0.3px;
       }
-      header span {
-        opacity: 0.8;
-        margin-left: 8px;
-      }
-      .workspace {
-        flex: 1;
-        display: flex;
-        overflow: hidden;
-      }
+      header span { opacity: 0.8; margin-left: 8px; }
+      .workspace { flex: 1; display: flex; overflow: hidden; }
       .activity-bar {
         width: 48px;
         background: #252526;
@@ -468,26 +538,59 @@ const buildMaximizedPageHtml = (cell) => {
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 12px 0;
         gap: 16px;
+        padding: 12px 0;
         font-size: 0.9rem;
         color: rgba(255,255,255,0.4);
       }
       .sidebar {
-        width: 220px;
+        width: 240px;
         background: #1f2430;
         border-right: 1px solid rgba(255,255,255,0.04);
-        padding: 16px;
+        padding: 12px 16px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        transition: width 0.2s ease;
+        overflow: hidden;
       }
-      .sidebar h2 {
+      .sidebar.collapsed {
+        width: 56px;
+        padding: 12px 8px;
+      }
+      .sidebar details {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        color: rgba(231,231,231,0.85);
+      }
+      .sidebar summary {
         margin: 0;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 0.2em;
         color: #9db4ff;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .sidebar summary::-webkit-details-marker { display: none; }
+      .sidebar summary::after {
+        content: '+';
+        margin-left: auto;
+        font-size: 1rem;
+        color: rgba(157,180,255,0.8);
+        transition: transform 0.2s ease;
+      }
+      .sidebar details[open] > summary::after {
+        content: '-';
+      }
+      .sidebar .collapsible-body {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        flex: 1;
       }
       .sidebar .meta {
         display: flex;
@@ -501,20 +604,19 @@ const buildMaximizedPageHtml = (cell) => {
         gap: 6px;
         color: rgba(231,231,231,0.85);
       }
-      .sidebar .meta span {
-        color: rgba(231,231,231,0.5);
-      }
+      .sidebar .meta span { color: rgba(231,231,231,0.5); }
       .sidebar .tip {
-        margin-top: auto;
         font-size: 0.75rem;
         color: rgba(255,255,255,0.55);
         line-height: 1.4;
       }
-      .main {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
+      .sidebar.collapsed summary {
+        justify-content: center;
       }
+      .sidebar.collapsed .collapsible-body {
+        display: none;
+      }
+      .main { flex: 1; display: flex; flex-direction: column; }
       .tab-bar {
         height: 34px;
         background: #2d2d2d;
@@ -533,20 +635,14 @@ const buildMaximizedPageHtml = (cell) => {
         border-bottom: none;
         color: #c6d4ff;
       }
-      .panels {
-        flex: 1;
-        display: flex;
-        overflow: hidden;
-      }
-      .panel {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        background: #1e1e1e;
-        border-right: 1px solid rgba(255,255,255,0.04);
-      }
-      .panel:last-child {
-        border-right: none;
+      .panels { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 30%); overflow: hidden; }
+      .panel { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; border-right: 1px solid rgba(255,255,255,0.04); }
+      .panel:last-child { border-right: none; }
+      .panel.panel-editor { grid-column: 1; min-width: 0; }
+      .panel.panel-output { grid-column: 2; min-width: 0; width: 100%; border-left: 1px solid rgba(255,255,255,0.04); overflow: hidden; }
+      .panel.panel-output .panel-content { overflow-x: auto; overflow-y: auto; }
+      @media (max-width: 960px) {
+        .panels { grid-template-columns: minmax(0, 1fr) minmax(220px, 30%); }
       }
       .panel-header {
         height: 32px;
@@ -562,30 +658,74 @@ const buildMaximizedPageHtml = (cell) => {
       }
       .panel-content {
         flex: 1;
-        overflow: auto;
+        overflow-y: auto;
+        overflow-x: hidden;
         padding: 18px;
         display: flex;
         flex-direction: column;
         gap: 16px;
+        min-height: 0;
       }
       .code-editor {
         background: #1d1f24;
         border: 1px solid rgba(255,255,255,0.05);
         border-radius: 8px;
-        padding: 16px;
+        padding: 0;
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+        flex: 1;
+        display: flex;
       }
-      .code-editor pre {
-        margin: 0;
-        overflow: auto;
-      }
-      .code-editor code {
-        display: block;
+      .code-editor-host {
+        flex: 1;
+        width: 100%;
+        min-height: 320px;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #1d1f24;
+        color: #e7e7e7;
         font-family: 'Fira Code', 'Source Code Pro', monospace;
         font-size: 0.9rem;
         line-height: 1.6;
-        white-space: pre;
       }
+      .code-editor-host textarea {
+        width: 100%;
+        height: 100%;
+        padding: 14px 16px;
+        border: none;
+        background: transparent;
+        color: #e7e7e7;
+        resize: none;
+        outline: none;
+        font-family: 'Fira Code', 'Source Code Pro', monospace;
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+      .code-textarea {
+        width: 100%;
+        height: 100%;
+        padding: 14px 16px;
+        border: none;
+        background: transparent;
+        color: #e7e7e7;
+        resize: none;
+        outline: none;
+        font-family: 'Fira Code', 'Source Code Pro', monospace;
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+      .ace_editor {
+        width: 100% !important;
+        height: 100% !important;
+        font-family: 'Fira Code', 'Source Code Pro', monospace !important;
+        font-size: 14px !important;
+      }
+      .ace_editor .ace_scroller {
+        padding: 14px 16px;
+      }
+      .ace_editor .ace_print-margin {
+        display: none;
+      }
+      .code-input:focus { outline: 2px solid rgba(79,160,255,0.45); }
       .command-bar {
         display: flex;
         justify-content: flex-end;
@@ -594,7 +734,7 @@ const buildMaximizedPageHtml = (cell) => {
       }
       .command-bar button {
         background: #0e639c;
-        color: white;
+        color: #fff;
         border: none;
         border-radius: 4px;
         padding: 6px 12px;
@@ -605,42 +745,14 @@ const buildMaximizedPageHtml = (cell) => {
         background: #3a3d41;
         color: rgba(255,255,255,0.85);
       }
-      .command-bar button:disabled {
-        cursor: not-allowed;
-        opacity: 0.6;
-      }
-      .panel-section h3 {
-        margin: 0 0 8px;
-        font-size: 0.9rem;
-        color: #c6d4ff;
-      }
-      .panel-section .note {
-        margin-top: 8px;
-        font-size: 0.75rem;
-        color: rgba(255,255,255,0.6);
-      }
-      .table-wrapper {
-        overflow: auto;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 6px;
-        max-height: 360px;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.82rem;
-      }
-      thead {
-        background: rgba(30, 64, 120, 0.35);
-      }
-      th, td {
-        padding: 8px 10px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-        text-align: left;
-      }
-      tr:nth-child(even) td {
-        background: rgba(255,255,255,0.03);
-      }
+      .command-bar button:disabled { cursor: not-allowed; opacity: 0.6; }
+      .panel-section h3 { margin: 0 0 8px; font-size: 0.9rem; color: #c6d4ff; }
+      .panel-section .note { margin-top: 8px; font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+      .table-wrapper { overflow: auto; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; max-height: 360px; }
+      table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+      thead { background: rgba(30,64,120,0.35); }
+      th, td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align: left; }
+      tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
       .code-block {
         background: rgba(15,20,30,0.9);
         border: 1px solid rgba(255,255,255,0.05);
@@ -656,11 +768,7 @@ const buildMaximizedPageHtml = (cell) => {
         border-radius: 6px;
         color: rgba(255,255,255,0.6);
       }
-      .figures {
-        display: grid;
-        gap: 16px;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      }
+      .figures { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
       .figure {
         margin: 0;
         background: rgba(255,255,255,0.03);
@@ -668,16 +776,8 @@ const buildMaximizedPageHtml = (cell) => {
         padding: 10px;
         border: 1px solid rgba(255,255,255,0.04);
       }
-      .figure img {
-        width: 100%;
-        display: block;
-        border-radius: 4px;
-      }
-      .figure figcaption {
-        margin-top: 6px;
-        font-size: 0.75rem;
-        color: rgba(255,255,255,0.65);
-      }
+      .figure img { width: 100%; display: block; border-radius: 4px; }
+      .figure figcaption { margin-top: 6px; font-size: 0.75rem; color: rgba(255,255,255,0.65); }
     </style>
   </head>
   <body>
@@ -692,71 +792,318 @@ const buildMaximizedPageHtml = (cell) => {
         <div>●</div>
       </nav>
       <aside class="sidebar">
-        <h2>Details</h2>
-        <div class="meta">
-          ${metadata || '<div><span>Status</span><strong>Ready</strong></div>'}
-          <div><span>Cell ID</span><strong>${escapeHtml(cell.id || '')}</strong></div>
-        </div>
-        <div class="tip">
-          Use this window for focused editing. Changes here are for reference; return to the main notebook to execute.
-        </div>
+        <details id="sidebar-details" open>
+          <summary>Details</summary>
+          <div class="collapsible-body">
+            <div class="meta">
+              ${metadataHtml}
+            </div>
+            <div class="tip">${escapeHtml(sidebarTip)}</div>
+          </div>
+        </details>
       </aside>
       <section class="main">
         <div class="tab-bar">
           <div class="tab">${escapeHtml(cell.title || 'Cell')}</div>
         </div>
         <div class="panels">
-          <section class="panel">
+          <section class="panel panel-editor">
             <div class="panel-header">
               <span>${escapeHtml(codeLabel)} Editor</span>
               <div class="command-bar">
-                <button id="run-button" type="button">Run Cell</button>
+                <button id="run-button" type="button">${escapeHtml(runButtonLabel)}</button>
                 <button id="close-button" class="secondary" type="button">Close</button>
               </div>
             </div>
             <div class="panel-content">
               <div class="code-editor">
-                <pre><code class="hljs language-${escapeHtml(languageClass)}">${escapedContent || '// Empty cell'}</code></pre>
+                ${codeEditorHtml}
               </div>
             </div>
           </section>
-          <section class="panel">
+          <section class="panel panel-output">
             <div class="panel-header">
               <span>Execution Output</span>
             </div>
-            <div class="panel-content">
-              ${outputHtml}
+            <div class="panel-content" id="output-panel">
+              ${initialOutputHtml}
             </div>
           </section>
         </div>
       </section>
     </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.3/ace.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha512-ZUJ0uCwZ0pniS3pSke1Mt2rt7NmBGG99nmHn7+O+kO5OVwOB1p5MNDoAuCEi0aKBslZx2drXr/7EQo1leChX8w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script>
       (function() {
-        try {
-          if (window.hljs && typeof window.hljs.highlightAll === 'function') {
-            window.hljs.highlightAll();
-          }
-        } catch (err) {
-          console.error(err);
-        }
-
+        const cellType = '${escapeHtml(cell.type || '')}';
+        const cellId = '${escapeHtml(cell.id || '')}';
         const runButton = document.getElementById('run-button');
         const closeButton = document.getElementById('close-button');
+        const outputPanel = document.getElementById('output-panel');
+        const editorHost = document.getElementById('code-editor-host');
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarDetails = document.getElementById('sidebar-details');
+        if (sidebar && sidebarDetails) {
+          const syncSidebarState = () => {
+            if (sidebarDetails.open) {
+              sidebar.classList.remove('collapsed');
+            } else {
+              sidebar.classList.add('collapsed');
+            }
+          };
+          sidebarDetails.addEventListener('toggle', syncSidebarState);
+          syncSidebarState();
+        }
+        let codeProvider = {
+          getValue: () => '',
+          focus: () => {},
+          onShortcut: () => {},
+        };
+
+        const escapeHtmlSafe = (value) => {
+          if (value === null || value === undefined) return '';
+          return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        };
+
+        const showStatus = (message) => {
+          if (!outputPanel) return;
+          outputPanel.innerHTML = '<section class="panel-section"><div class="note">' + escapeHtmlSafe(message) + '</div></section>';
+        };
+
+        const renderPythonResult = (payload) => {
+          if (!outputPanel) return;
+          if (!payload || typeof payload !== 'object') {
+            outputPanel.innerHTML = '<section class="panel-section"><div class="empty">No output captured.</div></section>';
+            return;
+          }
+          const sections = [];
+          const stdout = payload.stdout || '';
+          const stderr = payload.stderr || '';
+          const tables = payload.tables && typeof payload.tables === 'object' ? payload.tables : {};
+          const figures = Array.isArray(payload.figures) ? payload.figures : [];
+
+          if (stdout.trim()) {
+            sections.push('<section class="panel-section"><h3>stdout</h3><pre class="code-block">' + escapeHtmlSafe(stdout) + '</pre></section>');
+          }
+          if (stderr.trim()) {
+            sections.push('<section class="panel-section"><h3>stderr</h3><pre class="code-block">' + escapeHtmlSafe(stderr) + '</pre></section>');
+          }
+
+          const buildTable = (name, rows) => {
+            if (!Array.isArray(rows) || !rows.length) return '';
+            const safeName = name ? escapeHtmlSafe(name) : 'table';
+            const limited = rows.slice(0, 100);
+            if (typeof rows[0] === 'object' && rows[0] !== null && !Array.isArray(rows[0])) {
+              const columns = Object.keys(rows[0]);
+              const head = columns.map((col) => '<th>' + escapeHtmlSafe(col) + '</th>').join('');
+              const body = limited
+                .map((row) => '<tr>' + columns.map((col) => '<td>' + escapeHtmlSafe(row[col]) + '</td>').join('') + '</tr>')
+                .join('');
+              return '<section class="panel-section"><h3>Table: ' + safeName + '</h3><div class="table-wrapper"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' + (rows.length > 100 ? '<div class="note">Showing first 100 rows.</div>' : '') + '</section>';
+            }
+            const body = limited.map((value) => '<tr><td>' + escapeHtmlSafe(value) + '</td></tr>').join('');
+            return '<section class="panel-section"><h3>Table: ' + safeName + '</h3><div class="table-wrapper"><table><thead><tr><th>value</th></tr></thead><tbody>' + body + '</tbody></table></div>' + (rows.length > 100 ? '<div class="note">Showing first 100 rows.</div>' : '') + '</section>';
+          };
+
+          for (const [name, rows] of Object.entries(tables)) {
+            const tableHtml = buildTable(name, rows);
+            if (tableHtml) sections.push(tableHtml);
+          }
+
+          if (figures.length) {
+            const figureBlocks = figures
+              .map((fig, index) => {
+                const image = fig && typeof fig.image === 'string' ? fig.image.trim() : '';
+                if (!image) return '';
+                const caption = fig && typeof fig.name === 'string' && fig.name.trim() ? fig.name : 'Figure ' + (index + 1);
+                return '<figure class="figure"><img src="data:image/png;base64,' + image + '" alt="' + escapeHtmlSafe(caption) + '" /><figcaption>' + escapeHtmlSafe(caption) + '</figcaption></figure>';
+              })
+              .filter(Boolean)
+              .join('');
+            if (figureBlocks) {
+              sections.push('<section class="panel-section"><h3>Figures</h3><div class="figures">' + figureBlocks + '</div></section>');
+            }
+          }
+
+          if (!sections.length) {
+            sections.push('<section class="panel-section"><div class="empty">No output captured.</div></section>');
+          }
+          outputPanel.innerHTML = sections.join('');
+        };
+
         if (closeButton) {
           closeButton.addEventListener('click', () => window.close());
         }
 
-        const canRun = Boolean(window.opener && typeof window.opener.postMessage === 'function');
-        if (runButton) {
-          if (!canRun) {
+        if (cellType === 'python') {
+          const initialCode = editorHost ? editorHost.textContent || '' : '';
+          const encodeForTextarea = (value) => escapeHtmlSafe(value || '');
+
+          if (editorHost) {
+            editorHost.textContent = '';
+          }
+
+          let aceInitialized = false;
+
+          if (editorHost && window.ace && typeof window.ace.edit === 'function') {
+            try {
+              if (window.ace.config && typeof window.ace.config.set === 'function') {
+                window.ace.config.set('basePath', 'https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.3/');
+              }
+              const aceEditor = window.ace.edit(editorHost, {
+                useWorker: false,
+              });
+              aceEditor.setTheme('ace/theme/twilight');
+              aceEditor.session.setMode('ace/mode/python');
+              aceEditor.session.setUseWrapMode(true);
+              aceEditor.session.setTabSize(2);
+              aceEditor.session.setUseSoftTabs(true);
+              aceEditor.setShowPrintMargin(false);
+              aceEditor.renderer.setScrollMargin(8, 8, 12, 8);
+              aceEditor.setValue(initialCode || '', -1);
+              aceEditor.focus();
+
+              codeProvider = {
+                getValue: () => aceEditor.getValue(),
+                focus: () => aceEditor.focus(),
+                onShortcut: (handler) => {
+                  if (!handler) return;
+                  aceEditor.commands.addCommand({
+                    name: 'run-python-cell',
+                    bindKey: { win: 'Ctrl-Enter', mac: 'Command-Enter' },
+                    exec: handler,
+                  });
+                },
+              };
+              aceInitialized = true;
+            } catch (err) {
+              console.error('Ace editor initialization failed', err);
+            }
+          }
+
+          if (!aceInitialized && editorHost) {
+            // Ace unavailable — fallback to textarea.
+            editorHost.textContent = '';
+            const fallbackEditor = document.createElement('textarea');
+            fallbackEditor.id = 'code-editor';
+            fallbackEditor.className = 'code-textarea';
+            fallbackEditor.spellcheck = false;
+            fallbackEditor.value = initialCode || '';
+            editorHost.appendChild(fallbackEditor);
+            if (fallbackEditor) {
+              fallbackEditor.addEventListener('keydown', (event) => {
+                if (event.key === 'Tab') {
+                  event.preventDefault();
+                  const start = fallbackEditor.selectionStart;
+                  const end = fallbackEditor.selectionEnd;
+                  const value = fallbackEditor.value;
+                  const insert = '  ';
+                  fallbackEditor.value = value.slice(0, start) + insert + value.slice(end);
+                  fallbackEditor.selectionStart = fallbackEditor.selectionEnd = start + insert.length;
+                }
+              });
+            }
+            codeProvider = {
+              getValue: () => (fallbackEditor ? fallbackEditor.value : ''),
+              focus: () => fallbackEditor && fallbackEditor.focus(),
+              onShortcut: (handler) => {
+                if (!fallbackEditor || !handler) return;
+                fallbackEditor.addEventListener('keydown', (event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    handler();
+                  }
+                });
+              },
+            };
+          }
+
+          const resolveApiUrl = (path) => {
+            const candidates = [
+              () => (window.opener && window.opener.location ? window.opener.location.origin : null),
+              () => {
+                try {
+                  return document.referrer ? new URL(document.referrer).origin : null;
+                } catch (_) {
+                  return null;
+                }
+              },
+              () => window.location.origin,
+            ];
+            for (const getBase of candidates) {
+              try {
+                const base = getBase();
+                if (base && base !== 'null' && base !== 'undefined') {
+                  return new URL(path, base).toString();
+                }
+              } catch (_) {
+                continue;
+              }
+            }
+            return path;
+          };
+
+          const handleRun = async () => {
+            if (!runButton) return;
+            const code = codeProvider.getValue ? codeProvider.getValue() : '';
+            const originalText = runButton.textContent;
             runButton.disabled = true;
-            runButton.textContent = 'Run Unavailable';
-          } else {
-            runButton.addEventListener('click', () => {
-              window.opener.postMessage({ type: 'maximized-run', cellId: '${escapeHtml(cell.id)}' }, '*');
-            });
+            runButton.textContent = 'Running…';
+            showStatus('Executing Python code…');
+            try {
+              const endpoint = resolveApiUrl('/api/python/execute');
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code }),
+              });
+              if (!response.ok) {
+                let message = 'Python execution failed.';
+                try {
+                  const errJson = await response.json();
+                  if (errJson && errJson.error) message = errJson.error;
+                } catch (_) {}
+                throw new Error(message);
+              }
+              const data = await response.json();
+              renderPythonResult(data);
+              if (window.opener && typeof window.opener.postMessage === 'function') {
+                window.opener.postMessage({ type: 'maximized-python-sync', cellId, payload: data, code }, '*');
+              }
+            } catch (error) {
+              const message = error && error.message ? error.message : String(error);
+              outputPanel.innerHTML = '<section class="panel-section"><h3>Error</h3><pre class="code-block">' + escapeHtmlSafe(message) + '</pre></section>';
+            } finally {
+              runButton.textContent = originalText;
+              runButton.disabled = false;
+            }
+          };
+
+          if (runButton) {
+            runButton.addEventListener('click', handleRun);
+          }
+          if (codeProvider.onShortcut) {
+            codeProvider.onShortcut(handleRun);
+          }
+        } else {
+          try {
+            if (window.hljs && typeof window.hljs.highlightAll === 'function') {
+              window.hljs.highlightAll();
+            }
+          } catch (error) {
+            console.error(error);
+          }
+
+          if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = 'Run in Notebook';
+            runButton.title = 'Use the main window to execute this cell';
           }
         }
       })();
@@ -764,7 +1111,6 @@ const buildMaximizedPageHtml = (cell) => {
   </body>
 </html>`;
 };
-
 const SAVED_VIEW_TOTAL_KEYS = [
   'totalRows', 'rowsTotal', 'rowCount', 'totalRowCount',
   'total_rows', 'rows_total', 'row_count',
@@ -938,7 +1284,8 @@ export default function NotebookWorkbench({
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [savedViewsCollapsed, setSavedViewsCollapsed] = useState(false);
-  const [logWrapEnabled, setLogWrapEnabled] = useState(true);
+  const [logWrapEnabled, setLogWrapEnabled] = useState(false);
+  const runCellByIdRef = useRef(() => {});
 
   const handleMaximizeCell = useCallback((targetCell) => {
     if (!targetCell) return;
@@ -984,6 +1331,7 @@ export default function NotebookWorkbench({
   const [csvEntries, setCsvEntries] = useState([]);
   const [csvLoading, setCsvLoading] = useState(false);
   const [csvError, setCsvError] = useState(null);
+  const [selectedCsvIds, setSelectedCsvIds] = useState(() => new Set());
 
   const resolvedPerfMaxClientRows = Number(perfMaxClientRows);
   const maxClientRowsCap = resolvedPerfMaxClientRows < 0
@@ -1709,6 +2057,19 @@ export default function NotebookWorkbench({
     [agent, model, cells, results],
   );
 
+  const runCellById = useCallback(
+    (id, silent = false) => {
+      if (!id) return;
+      const target = cells.find((c) => c.id === id);
+      if (target) runCell(target, silent);
+    },
+    [cells, runCell],
+  );
+
+  useEffect(() => {
+    runCellByIdRef.current = runCellById;
+  }, [runCellById]);
+
   useEffect(() => {
     const handleMessage = (event) => {
       if (!event || !event.data) return;
@@ -1716,13 +2077,13 @@ export default function NotebookWorkbench({
       if (type === 'maximized-run' && cellId) {
         const target = cells.find((cell) => cell.id === cellId);
         if (target) {
-          runCell(target);
+          runCellById(target.id);
         }
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [cells, runCell]);
+  }, [cells, runCellById]);
 
   const updateCellContent = useCallback(
     (id, nextContent) => {
@@ -1756,9 +2117,13 @@ export default function NotebookWorkbench({
             autoRun: template.autoRun,
             content: template.content || '',
             outputData: null,
-            dfName: cell.dfName,
+            dfName: null,
             outputRaw: '',
             outputTableProps: null,
+            outputFigures: [],
+            showOutput: false,
+            outputCollapsed: false,
+            outputActiveColumn: null,
           };
           return nextCell;
         }),
@@ -1817,8 +2182,89 @@ export default function NotebookWorkbench({
         virtualizeOnMaximize: tableVirtualize = virtualizeOnMaximize,
         virtualRowHeight: tableVirtualRowHeight = virtRowHeight,
       } = cell.outputTableProps;
+      const hasDownloadableCsv = Array.isArray(data) && data.length > 0;
+      const handleSaveCsv = async () => {
+        if (!hasDownloadableCsv) return;
+        try {
+          const csvPayload = buildCsvFromTableProps(cell.outputTableProps);
+          if (!csvPayload) return;
+
+          const rawName = cell.dfName || cell.title || cell.id || 'notebook_output';
+          const fileNameBase = sanitizeName(rawName) || 'notebook_output';
+          const finalFileName = fileNameBase.endsWith('.csv') ? fileNameBase : `${fileNameBase}.csv`;
+
+          setCsvError(null);
+          setCsvLoading(true);
+
+          const res = await fetch('/api/table/csv_entries', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileName: finalFileName, content: csvPayload }),
+          });
+          const contentType = res.headers?.get?.('content-type') || '';
+          const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+          if (!res.ok) {
+            const message = (payload && payload.error)
+              || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+            throw new Error(message);
+          }
+
+          if (payload && typeof payload === 'object' && payload.entry) {
+            const newEntry = payload.entry;
+            setCsvEntries((prev) => {
+              const list = Array.isArray(prev) ? prev : [];
+              const filtered = list.filter((entry) => entry?.id !== newEntry.id);
+              return [newEntry, ...filtered];
+            });
+          }
+
+          const rowsCount = Array.isArray(data) ? data.length : 0;
+          const successStamp = new Date().toLocaleTimeString();
+          setResults((prev) => ({
+            ...prev,
+            logs: [...prev.logs, `✅ [${successStamp}] Saved ${finalFileName} (${rowsCount} rows) to CSV library.`],
+          }));
+
+          await refreshCsvEntries();
+        } catch (error) {
+          const failStamp = new Date().toLocaleTimeString();
+          const message = error?.message || 'Failed to save CSV';
+          setResults((prev) => ({
+            ...prev,
+            logs: [...prev.logs, `⚠️ [${failStamp}] CSV save failed: ${message}`],
+          }));
+          setCsvError(message);
+        } finally {
+          setCsvLoading(false);
+        }
+      };
       return (
         <div style={{ minHeight: 220 }}>
+          {hasDownloadableCsv ? (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <button
+                type="button"
+                onClick={handleSaveCsv}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  color: csvLoading ? 'rgba(157,180,255,0.5)' : '#9db4ff',
+                  fontSize: '0.82rem',
+                  cursor: csvLoading ? 'not-allowed' : 'pointer',
+                  pointerEvents: csvLoading ? 'none' : 'auto',
+                  textDecoration: 'underline',
+                }}
+                disabled={csvLoading}
+              >
+                <img src={csvIcon} alt="" style={{ width: 14, height: 14, opacity: 0.85 }} />
+                <span>Save as CSV</span>
+              </button>
+            </div>
+          ) : null}
           <TableComponent
             data={Array.isArray(data) ? data : []}
             exportContext={exportContext}
@@ -1974,32 +2420,65 @@ export default function NotebookWorkbench({
     fetchViews();
   }, []);
 
-  useEffect(() => {
-    const fetchCsvEntries = async () => {
-      try {
-        setCsvLoading(true);
-        setCsvError(null);
-        const res = await fetch('/api/table/csv_entries');
-        const contentType = res.headers?.get?.('content-type') || '';
-        const payload = contentType.includes('application/json') ? await res.json() : await res.text();
-        if (!res.ok) {
-          const message = (payload && payload.error)
-            || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
-          throw new Error(message);
-        }
-        const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-        setCsvEntries(entries);
-      } catch (err) {
-        console.error('CSV entries fetch failed', err);
-        setCsvError(err?.message || 'Failed to load CSV entries');
-        setCsvEntries([]);
-      } finally {
-        setCsvLoading(false);
-      }
-    };
-
-    fetchCsvEntries();
+  const resolveCsvEntryKey = useCallback((entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+    return (
+      entry.id
+      ?? entry.entryId
+      ?? entry.entry_id
+      ?? entry.storedPath
+      ?? entry.stored_path
+      ?? entry.relativePath
+      ?? entry.relative_path
+      ?? entry.fileName
+      ?? entry.FILE_NAME
+      ?? entry.originalName
+      ?? entry.ORIGINAL_NAME
+      ?? null
+    );
   }, []);
+
+  const refreshCsvEntries = useCallback(async () => {
+    try {
+      setCsvLoading(true);
+      setCsvError(null);
+      const res = await fetch('/api/table/csv_entries');
+      const contentType = res.headers?.get?.('content-type') || '';
+      const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+      setCsvEntries(entries);
+      setSelectedCsvIds((prev) => {
+        if (!(prev instanceof Set)) return new Set();
+        const allowed = new Set(entries.map((entry) => resolveCsvEntryKey(entry)).filter(Boolean));
+        let changed = false;
+        const next = new Set();
+        prev.forEach((key) => {
+          if (allowed.has(key)) {
+            next.add(key);
+          } else {
+            changed = true;
+          }
+        });
+        if (!changed && next.size === prev.size) return prev;
+        return next;
+      });
+    } catch (err) {
+      console.error('CSV entries fetch failed', err);
+      setCsvError(err?.message || 'Failed to load CSV entries');
+      setCsvEntries([]);
+    } finally {
+      setCsvLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshCsvEntries();
+  }, [refreshCsvEntries]);
 
   const handleSavedViewDragStart = useCallback((event, view) => {
     if (!event?.dataTransfer || !view) return;
@@ -2023,10 +2502,10 @@ export default function NotebookWorkbench({
     try {
       const payload = JSON.stringify({
         kind: 'csv-entry',
-        entry: {
-          id: entryId,
-          fileName: entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || '',
-        },
+          entry: {
+            id: entryId,
+            fileName: entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || '',
+          },
       });
       event.dataTransfer.effectAllowed = 'copy';
       event.dataTransfer.setData('application/json', payload);
@@ -2035,6 +2514,125 @@ export default function NotebookWorkbench({
       console.warn('CSV drag start failed', err);
     }
   }, []);
+
+  const handleCsvDownload = useCallback(async (entry) => {
+    if (!entry) return;
+    const entryId = entry.id ?? entry.entryId ?? entry.entry_id;
+    const storedPath = entry.storedPath || entry.stored_path || entry.relativePath || entry.relative_path;
+    const fileName = entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || `csv_${entryId || 'download'}.csv`;
+    const entryKey = resolveCsvEntryKey(entry);
+
+    const resolvedId = entryId || (storedPath ? encodeURIComponent(storedPath) : null);
+    if (!resolvedId) return;
+
+    try {
+      const res = await fetch(`/api/table/csv_entries/${resolvedId}/load`);
+      const contentType = res.headers?.get?.('content-type') || '';
+      const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+
+      const table = payload?.table || {};
+      const rows = Array.isArray(table?.data) ? table.data : [];
+      const headers = Array.isArray(table?.headers) ? table.headers : null;
+
+      const downloadFileName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`;
+
+      if (!rows.length) {
+        const blob = new Blob([], { type: 'text/csv;charset=utf-8;' });
+        const downloadUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = downloadUrl;
+        anchor.download = downloadFileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(downloadUrl);
+        if (entryKey) {
+          setSelectedCsvIds((prev) => {
+            if (!(prev instanceof Set) || !prev.has(entryKey)) return prev;
+            const next = new Set(prev);
+            next.delete(entryKey);
+            return next;
+          });
+        }
+        return;
+      }
+
+      const csvContent = buildCsvFromTableProps({ data: rows, headers }) || '';
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = downloadFileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(downloadUrl);
+      if (entryKey) {
+        setSelectedCsvIds((prev) => {
+          if (!(prev instanceof Set) || !prev.has(entryKey)) return prev;
+          const next = new Set(prev);
+          next.delete(entryKey);
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('CSV download failed', err);
+      const failStamp = new Date().toLocaleTimeString();
+      setResults((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `⚠️ [${failStamp}] CSV download failed: ${err?.message || 'Unknown error'}`],
+      }));
+    }
+  }, [resolveCsvEntryKey, setResults]);
+
+  const toggleCsvSelection = useCallback((entry) => {
+    const key = resolveCsvEntryKey(entry) || null;
+    if (!key) return;
+    setSelectedCsvIds((prev) => {
+      const next = prev instanceof Set ? new Set(prev) : new Set();
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, [resolveCsvEntryKey]);
+
+  const isCsvSelected = useCallback((entry) => {
+    if (!(selectedCsvIds instanceof Set)) return false;
+    const key = resolveCsvEntryKey(entry);
+    if (!key) return false;
+    return selectedCsvIds.has(key);
+  }, [selectedCsvIds, resolveCsvEntryKey]);
+
+  const handleBulkCsvDownload = useCallback(async () => {
+    if (!(selectedCsvIds instanceof Set) || !selectedCsvIds.size) return;
+    const entryMap = new Map();
+    for (const entry of csvEntries) {
+      const key = resolveCsvEntryKey(entry);
+      if (key) entryMap.set(key, entry);
+    }
+    const keys = Array.from(selectedCsvIds);
+    for (const key of keys) {
+      const entry = entryMap.get(key);
+      if (!entry) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await handleCsvDownload(entry);
+      setSelectedCsvIds((prev) => {
+        if (!(prev instanceof Set)) return new Set();
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, [csvEntries, selectedCsvIds, resolveCsvEntryKey, handleCsvDownload]);
 
   const handleCellDragEnter = useCallback((event, cell) => {
     if (!cell || (cell.type !== 'text' && cell.type !== 'python')) return;
@@ -2823,22 +3421,41 @@ export default function NotebookWorkbench({
                   flex: csvCollapsed ? '0 0 auto' : '1 1 0%',
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => setCsvCollapsed((prev) => !prev)}
-                  style={collapsibleHeaderButtonStyle}
-                  aria-expanded={!csvCollapsed}
-                >
-                  <span>CSV Tables</span>
-                  <span style={{ fontSize: '0.82rem', lineHeight: 1 }}>{csvCollapsed ? '▸' : '▾'}</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setCsvCollapsed((prev) => !prev)}
+                    style={collapsibleHeaderButtonStyle}
+                    aria-expanded={!csvCollapsed}
+                  >
+                    <span>CSV Tables</span>
+                    <span style={{ fontSize: '0.82rem', lineHeight: 1 }}>{csvCollapsed ? '▸' : '▾'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBulkCsvDownload}
+                    disabled={!selectedCsvIds?.size || csvLoading}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: !selectedCsvIds?.size || csvLoading ? 'rgba(157,180,255,0.5)' : '#9db4ff',
+                      textDecoration: 'underline',
+                      fontSize: '0.75rem',
+                      cursor: !selectedCsvIds?.size || csvLoading ? 'not-allowed' : 'pointer',
+                      padding: 0,
+                      flex: '0 0 auto',
+                    }}
+                  >
+                    Download Selected
+                  </button>
+                </div>
                 {!csvCollapsed && (
                   <div
                     style={{
                       flex: 1,
                       minHeight: 0,
                       overflowY: 'auto',
-                      overflowX: 'hidden',
+                      overflowX: 'auto',
                       paddingRight: 4,
                       display: 'flex',
                       flexDirection: 'column',
@@ -2854,11 +3471,24 @@ export default function NotebookWorkbench({
                     ) : (
                       csvEntries.map((entry) => {
                         const entryId = entry.id ?? entry.entryId ?? entry.entry_id;
-                        const name = entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || (entryId ? `CSV ${entryId}` : 'CSV Table');
+                        const baseName = entry.fileName || entry.FILE_NAME || entry.originalName || entry.ORIGINAL_NAME || (entryId ? `CSV ${entryId}` : 'CSV Table');
+                        const timestamp = entry.createdAt || entry.created_at || entry.created || entry.timestamp || entry.uploadedAt || entry.uploaded_at || null;
+                        const formattedTimestamp = (() => {
+                          if (!timestamp) return null;
+                          try {
+                            const date = new Date(timestamp);
+                            if (Number.isNaN(date.getTime())) return null;
+                            return date.toLocaleString();
+                          } catch (err) {
+                            return null;
+                          }
+                        })();
+                        const name = formattedTimestamp ? `${baseName} (${formattedTimestamp})` : baseName;
+                        const entryKey = resolveCsvEntryKey(entry) || `${entryId || baseName}`;
+                        const checked = isCsvSelected(entry);
                         return (
-                          <button
-                            key={`${entryId || name}`}
-                            type="button"
+                          <div
+                            key={entryKey}
                             draggable
                             onDragStart={(event) => handleCsvDragStart(event, entry)}
                             onMouseEnter={(event) => handlePanelItemHover(event, true)}
@@ -2870,21 +3500,35 @@ export default function NotebookWorkbench({
                               padding: '7px 9px',
                               borderRadius: 9,
                               border: 'none',
-                              background: 'rgba(18,28,44,0.25)',
+                              background: checked ? 'rgba(56,94,162,0.35)' : 'rgba(18,28,44,0.25)',
                               color: '#f0f6ff',
                               cursor: 'grab',
                               textAlign: 'left',
                               fontSize: '0.72rem',
                               transition: 'background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                              minWidth: 'max-content',
+                              whiteSpace: 'nowrap',
                             }}
                           >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                event.stopPropagation();
+                                toggleCsvSelection(entry);
+                              }}
+                              onMouseDown={(event) => event.stopPropagation()}
+                              onClick={(event) => event.stopPropagation()}
+                              style={{ flex: '0 0 auto', width: 14, height: 14 }}
+                              aria-label={`Select ${name}`}
+                            />
                             <img
                               src={csvIcon}
                               alt="CSV"
                               style={{ width: 14, height: 14, flex: '0 0 auto', filter: 'drop-shadow(0 0 2px rgba(80,150,255,0.2))' }}
                             />
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                          </button>
+                            <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}>{name}</span>
+                          </div>
                         );
                       })
                     )}
@@ -2916,7 +3560,9 @@ export default function NotebookWorkbench({
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {cells.map((cell) => {
-            const height = cell.type === 'text' ? 140 : 180;
+            const isPython = cell.type === 'python';
+            const isText = cell.type === 'text';
+            const editorHeight = isPython ? 360 : isText ? 150 : 200;
             const isCollapsed = !!cell.collapsed;
             const dfLabel = cell.dfName ? `DataFrame: ${cell.dfName}` : 'No dataframe yet';
             const isDroppableCell = cell.type === 'text' || cell.type === 'python';
@@ -2931,12 +3577,41 @@ export default function NotebookWorkbench({
               flexDirection: 'column',
               gap: 8,
             };
-            const outputWrapperStyle = cell.outputTableProps
-              ? { ...outputWrapperStyleBase, maxHeight: 460, minHeight: 220, overflow: 'auto' }
-              : { ...outputWrapperStyleBase, maxHeight: 220, overflow: 'auto' };
-            const outputContainerStyle = cell.outputTableProps
-              ? { height: 320, overflow: 'auto', paddingRight: 3 }
-              : { maxHeight: 150, overflow: 'auto', paddingRight: 3 };
+            const outputWrapperStyle = (() => {
+              if (cell.outputTableProps) {
+                return {
+                  ...outputWrapperStyleBase,
+                  maxHeight: isPython ? 560 : 460,
+                  minHeight: isPython ? 260 : 220,
+                  overflow: 'auto',
+                };
+              }
+              if (isPython) {
+                return {
+                  ...outputWrapperStyleBase,
+                  maxHeight: 420,
+                  minHeight: 200,
+                  overflow: 'auto',
+                };
+              }
+              return { ...outputWrapperStyleBase, maxHeight: 220, overflow: 'auto' };
+            })();
+            const outputContainerStyle = (() => {
+              if (cell.outputTableProps) {
+                return { height: isPython ? 360 : 320, overflow: 'auto', paddingRight: 3 };
+              }
+              if (isPython) {
+                return { maxHeight: 320, overflow: 'auto', paddingRight: 3 };
+              }
+              return { maxHeight: 150, overflow: 'auto', paddingRight: 3 };
+            })();
+            const editorSectionStyle = (() => {
+              const base = { display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 3 };
+              if (isPython) {
+                return base;
+              }
+              return { ...base, maxHeight: 300, overflowY: 'auto' };
+            })();
 
             if (isCollapsed) {
               return (
@@ -2978,7 +3653,7 @@ export default function NotebookWorkbench({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button
                       type="button"
-                      onClick={() => runCell(cell)}
+                      onClick={() => runCellById(cell.id)}
                       disabled={runningCellId === cell.id}
                       style={{ border: 'none', background: 'transparent', padding: 4, opacity: runningCellId === cell.id ? 0.6 : 1, cursor: runningCellId === cell.id ? 'default' : 'pointer' }}
                       aria-label="Run cell"
@@ -3157,7 +3832,7 @@ export default function NotebookWorkbench({
                   <span style={{ fontSize: '0.78rem', color: '#7ea2d8' }}>{dfLabel}</span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300, overflowY: 'auto', paddingRight: 3 }}>
+                <div style={editorSectionStyle}>
                   <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14 }}>
                     <div>
                       <h2 style={{ margin: '8px 0 4px', fontSize: '1.1rem', color: '#f5f9ff' }}>{cell.title}</h2>
@@ -3166,7 +3841,7 @@ export default function NotebookWorkbench({
                   </header>
                   <div style={{ border: '1px solid #202c44', borderRadius: 9, overflow: 'hidden' }}>
                     <Editor
-                      height={height}
+                      height={editorHeight}
                       language={cell.language}
                       theme="vs-dark"
                       value={cell.content}
@@ -3175,7 +3850,7 @@ export default function NotebookWorkbench({
                         try {
                           editorInstance.addCommand(
                             monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.Enter,
-                            () => runCell(cell),
+                            () => runCellByIdRef.current(cell.id),
                           );
                         } catch {}
                       }}
@@ -3228,7 +3903,7 @@ export default function NotebookWorkbench({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
                   <button
                     type="button"
-                    onClick={() => runCell(cell)}
+                    onClick={() => runCellById(cell.id)}
                     disabled={runningCellId === cell.id}
                     style={{
                       border: 'none',
