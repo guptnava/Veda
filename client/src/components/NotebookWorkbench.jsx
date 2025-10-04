@@ -1,4 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import minimiseIcon from '../icons/minimise.svg';
+import maximiseIcon from '../icons/maximise.svg';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import StandaloneChrome from './StandaloneChrome';
@@ -3659,7 +3661,7 @@ export default function NotebookWorkbench({
                               }}
                               onMouseDown={(event) => event.stopPropagation()}
                               onClick={(event) => event.stopPropagation()}
-                              style={{ flex: '0 0 auto', width: 14, height: 14 }}
+                              style={{ flex: '0 0 auto', width: 10, height: 10 }}
                               aria-label={`Select ${name}`}
                             />
                             <img
@@ -3869,11 +3871,11 @@ export default function NotebookWorkbench({
                 <div
                   style={{
                     position: 'absolute',
-                    top: 12,
-                    left: 16,
+                    top: 8,
+                    left: 12,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                   }}
                 >
                   <button
@@ -3882,27 +3884,18 @@ export default function NotebookWorkbench({
                     aria-label={isCollapsed ? 'Expand cell' : 'Collapse cell'}
                     title={isCollapsed ? 'Expand' : 'Collapse'}
                     style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: '50%',
-                      border: '1px solid rgba(160,120,38,0.6)',
-                      background: '#f5b041',
+                      border: 'none',
+                      background: 'transparent',
+                      padding: 0,
+                      cursor: 'pointer',
+                      width: 22,
+                      height: 22,
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      cursor: 'pointer',
-                      padding: 0,
                     }}
                   >
-                    <span
-                      style={{
-                        display: 'block',
-                        width: 8,
-                        height: 2,
-                        background: '#4d3208',
-                        borderRadius: 1,
-                      }}
-                    />
+                    <img src={minimiseIcon} alt="Collapse" style={{ width: 22, height: 22 }} />
                   </button>
                   <button
                     type="button"
@@ -3910,27 +3903,18 @@ export default function NotebookWorkbench({
                     aria-label="Maximize cell"
                     title="Maximize"
                     style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: '50%',
-                      border: '1px solid rgba(54,130,64,0.6)',
-                      background: '#28c840',
+                      border: 'none',
+                      background: 'transparent',
+                      padding: 0,
+                      cursor: 'pointer',
+                      width: 22,
+                      height: 22,
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      cursor: 'pointer',
-                      padding: 0,
                     }}
                   >
-                    <span
-                      style={{
-                        display: 'block',
-                        width: 8,
-                        height: 8,
-                        border: '1px solid #1b6a24',
-                        borderRadius: 2,
-                      }}
-                    />
+                    <img src={maximiseIcon} alt="Maximize" style={{ width: 22, height: 22 }} />
                   </button>
                 </div>
 
