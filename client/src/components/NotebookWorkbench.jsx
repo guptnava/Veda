@@ -1332,6 +1332,13 @@ export default function NotebookWorkbench({
   const [csvLoading, setCsvLoading] = useState(false);
   const [csvError, setCsvError] = useState(null);
   const [selectedCsvIds, setSelectedCsvIds] = useState(() => new Set());
+  const [pythonScripts, setPythonScripts] = useState([]);
+  const [pythonScriptsLoading, setPythonScriptsLoading] = useState(false);
+  const [pythonScriptsError, setPythonScriptsError] = useState(null);
+  const [pythonScriptsSaving, setPythonScriptsSaving] = useState(false);
+  const [pythonScriptSelections, setPythonScriptSelections] = useState({});
+  const [pythonScriptsCollapsed, setPythonScriptsCollapsed] = useState({});
+  const [pythonScriptLoadingId, setPythonScriptLoadingId] = useState(null);
 
   const resolvedPerfMaxClientRows = Number(perfMaxClientRows);
   const maxClientRowsCap = resolvedPerfMaxClientRows < 0
@@ -2480,6 +2487,47 @@ export default function NotebookWorkbench({
     refreshCsvEntries();
   }, [refreshCsvEntries]);
 
+  const refreshPythonScripts = useCallback(async () => {
+    try {
+      setPythonScriptsLoading(true);
+      setPythonScriptsError(null);
+      const res = await fetch('/api/python_scripts');
+      const contentType = res.headers?.get?.('content-type') || '';
+      const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const scripts = Array.isArray(payload?.scripts) ? payload.scripts : [];
+      setPythonScripts(scripts);
+      setPythonScriptSelections((prev) => {
+        if (!prev || typeof prev !== 'object') return {};
+        const allowed = new Set(scripts.map((script) => script.id).filter(Boolean));
+        let changed = false;
+        const next = { ...prev };
+        Object.keys(prev).forEach((key) => {
+          const value = prev[key];
+          if (value && !allowed.has(value)) {
+            delete next[key];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    } catch (err) {
+      console.error('Python scripts fetch failed', err);
+      setPythonScriptsError(err?.message || 'Failed to load Python scripts');
+      setPythonScripts([]);
+    } finally {
+      setPythonScriptsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshPythonScripts();
+  }, [refreshPythonScripts]);
+
   const handleSavedViewDragStart = useCallback((event, view) => {
     if (!event?.dataTransfer || !view) return;
     try {
@@ -2589,6 +2637,98 @@ export default function NotebookWorkbench({
       }));
     }
   }, [resolveCsvEntryKey, setResults]);
+
+  const handleSavePythonScript = useCallback(async (cell) => {
+    if (!cell || cell.type !== 'python') return;
+    const defaultName = cell.title?.trim() || `python_cell_${cell.id.slice(-4)}`;
+    let name = defaultName;
+    try {
+      if (typeof window !== 'undefined' && window.prompt) {
+        const response = window.prompt('Save Python script as:', defaultName);
+        if (!response) return;
+        name = response.trim();
+        if (!name) return;
+      }
+    } catch (err) {
+      console.warn('Script name prompt failed', err);
+    }
+
+    try {
+      setPythonScriptsSaving(true);
+      setPythonScriptsError(null);
+      const res = await fetch('/api/python_scripts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: name, content: cell.content || '' }),
+      });
+      const contentType = res.headers?.get?.('content-type') || '';
+      const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const script = payload?.script;
+      const stamp = new Date().toLocaleTimeString();
+      setResults((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `✅ [${stamp}] Saved Python script ${script?.fileName || name}.`],
+      }));
+      await refreshPythonScripts();
+    } catch (err) {
+      console.error('Python script save failed', err);
+      const failStamp = new Date().toLocaleTimeString();
+      setResults((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `⚠️ [${failStamp}] Python script save failed: ${err?.message || 'Unknown error'}`],
+      }));
+      setPythonScriptsError(err?.message || 'Failed to save Python script');
+    } finally {
+      setPythonScriptsSaving(false);
+    }
+  }, [refreshPythonScripts, setResults]);
+
+  const handleLoadPythonScript = useCallback(async (cell, scriptId) => {
+    if (!cell || cell.type !== 'python' || !scriptId) return;
+    try {
+      setPythonScriptLoadingId(scriptId);
+      setPythonScriptsError(null);
+      const res = await fetch(`/api/python_scripts/${encodeURIComponent(scriptId)}`);
+      const contentType = res.headers?.get?.('content-type') || '';
+      const payload = contentType.includes('application/json') ? await res.json() : await res.text();
+      if (!res.ok) {
+        const message = (payload && payload.error)
+          || (typeof payload === 'string' ? payload : `HTTP ${res.status}`);
+        throw new Error(message);
+      }
+      const script = payload?.script;
+      const scriptContent = script?.content ?? '';
+      setCells((prev) =>
+        prev.map((c) =>
+          c.id === cell.id
+            ? {
+                ...c,
+                content: scriptContent,
+              }
+            : c,
+        ),
+      );
+      setResults((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `✅ [${new Date().toLocaleTimeString()}] Loaded Python script ${script?.fileName || scriptId} into cell.`],
+      }));
+    } catch (err) {
+      console.error('Python script load failed', err);
+      const failStamp = new Date().toLocaleTimeString();
+      setResults((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `⚠️ [${failStamp}] Python script load failed: ${err?.message || 'Unknown error'}`],
+      }));
+      setPythonScriptsError(err?.message || 'Failed to load Python script');
+    } finally {
+      setPythonScriptLoadingId(null);
+    }
+  }, [setCells, setResults]);
 
   const toggleCsvSelection = useCallback((entry) => {
     const key = resolveCsvEntryKey(entry) || null;
@@ -3712,6 +3852,8 @@ export default function NotebookWorkbench({
                   ...cardStyle,
                   border: '1px solid #2c3b58',
                   overflow: 'hidden',
+                  position: 'relative',
+                  paddingTop: 36,
                   ...(isDragTarget
                     ? {
                         border: '1px solid #5a8cff',
@@ -3724,6 +3866,74 @@ export default function NotebookWorkbench({
                 onDragLeave={(event) => handleCellDragLeave(event, cell)}
                 onDropCapture={(event) => handlePanelItemDrop(event, cell)}
               >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 12,
+                    left: 16,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapse(cell.id)}
+                    aria-label={isCollapsed ? 'Expand cell' : 'Collapse cell'}
+                    title={isCollapsed ? 'Expand' : 'Collapse'}
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(160,120,38,0.6)',
+                      background: '#f5b041',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'block',
+                        width: 8,
+                        height: 2,
+                        background: '#4d3208',
+                        borderRadius: 1,
+                      }}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMaximizeCell(cell)}
+                    aria-label="Maximize cell"
+                    title="Maximize"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(54,130,64,0.6)',
+                      background: '#28c840',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'block',
+                        width: 8,
+                        height: 8,
+                        border: '1px solid #1b6a24',
+                        borderRadius: 2,
+                      }}
+                    />
+                  </button>
+                </div>
+
                 <div
                   style={{
                     display: 'flex',
@@ -3797,37 +4007,25 @@ export default function NotebookWorkbench({
                       />
                       Inline output
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => handleMaximizeCell(cell)}
-                      style={{
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        padding: '4px 6px',
-                        borderRadius: 6,
-                        color: '#6fc3ff',
-                        fontSize: '0.78rem',
-                        textDecoration: 'underline',
-                      }}
-                    >
-                      Maximize
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleCollapse(cell.id)}
-                      style={{
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        padding: '4px 6px',
-                        borderRadius: 6,
-                        color: '#96b8ff',
-                        fontSize: '0.78rem',
-                      }}
-                    >
-                      {isCollapsed ? 'Expand' : 'Collapse'}
-                    </button>
+                    {isPython && (
+                      <button
+                        type="button"
+                        onClick={() => handleSavePythonScript(cell)}
+                        disabled={pythonScriptsSaving}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          cursor: pythonScriptsSaving ? 'not-allowed' : 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                          color: pythonScriptsSaving ? 'rgba(159,199,255,0.6)' : '#9db4ff',
+                          fontSize: '0.78rem',
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        {pythonScriptsSaving ? 'Saving…' : 'Save Script'}
+                      </button>
+                    )}
                   </div>
                   <span style={{ fontSize: '0.78rem', color: '#7ea2d8' }}>{dfLabel}</span>
                 </div>
@@ -3839,6 +4037,136 @@ export default function NotebookWorkbench({
                       <span style={{ fontSize: '0.8rem', color: '#8da8cc' }}>{cell.placeholder}</span>
                     </div>
                   </header>
+                  {isPython ? (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        marginBottom: 10,
+                        padding: '10px 12px',
+                        borderRadius: 9,
+                        border: '1px solid rgba(48,74,110,0.8)',
+                        background: 'rgba(18,26,40,0.65)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      {(() => {
+                        const scriptsCollapsed = !!pythonScriptsCollapsed[cell.id];
+                        return (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <span style={{ fontSize: '0.78rem', color: '#9bb8ff', fontWeight: 600 }}>Saved Python Scripts</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                {!scriptsCollapsed && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={refreshPythonScripts}
+                                      disabled={pythonScriptsLoading}
+                                      style={{
+                                        border: 'none',
+                                        background: 'transparent',
+                                        cursor: pythonScriptsLoading ? 'not-allowed' : 'pointer',
+                                        color: pythonScriptsLoading ? 'rgba(159,199,255,0.6)' : '#9db4ff',
+                                        fontSize: '0.75rem',
+                                        textDecoration: 'underline',
+                                        padding: 0,
+                                      }}
+                                    >
+                                      {pythonScriptsLoading ? 'Refreshing…' : 'Refresh'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const selectedId = pythonScriptSelections[cell.id] || '';
+                                        if (selectedId) {
+                                          handleLoadPythonScript(cell, selectedId);
+                                        }
+                                      }}
+                                      disabled={pythonScriptsLoading || !pythonScriptSelections[cell.id] || pythonScriptLoadingId === pythonScriptSelections[cell.id]}
+                                      style={{
+                                        border: '1px solid rgba(90,130,190,0.8)',
+                                        background: 'rgba(24,34,52,0.95)',
+                                        color: '#dfe8ff',
+                                        fontSize: '0.75rem',
+                                        padding: '4px 10px',
+                                        borderRadius: 6,
+                                        cursor: pythonScriptsLoading || !pythonScriptSelections[cell.id] ? 'not-allowed' : 'pointer',
+                                        opacity: pythonScriptsLoading || !pythonScriptSelections[cell.id] ? 0.6 : 1,
+                                      }}
+                                    >
+                                      {pythonScriptLoadingId === pythonScriptSelections[cell.id] ? 'Loading…' : 'Load into cell'}
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPythonScriptsCollapsed((prev) => ({
+                                      ...prev,
+                                      [cell.id]: !scriptsCollapsed,
+                                    }))
+                                  }
+                                  style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    color: '#9bb8ff',
+                                    fontSize: '0.75rem',
+                                    textDecoration: 'underline',
+                                    padding: 0,
+                                  }}
+                                >
+                                  {scriptsCollapsed ? 'Expand' : 'Collapse'}
+                                </button>
+                              </div>
+                            </div>
+                            {!scriptsCollapsed ? (
+                              pythonScriptsError ? (
+                                <div style={{ fontSize: '0.75rem', color: '#e89aa9' }}>{pythonScriptsError}</div>
+                              ) : pythonScriptsLoading ? (
+                                <div style={{ fontSize: '0.75rem', color: '#9db6d8' }}>Loading scripts…</div>
+                              ) : pythonScripts.length === 0 ? (
+                                <div style={{ fontSize: '0.75rem', color: '#8298b8' }}>No saved scripts yet.</div>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <label style={{ fontSize: '0.72rem', color: '#a8bcdf', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    Select script
+                                    <select
+                                      value={pythonScriptSelections[cell.id] || ''}
+                                      onChange={(event) => {
+                                        const value = event.target.value;
+                                        setPythonScriptSelections((prev) => ({
+                                          ...prev,
+                                          [cell.id]: value,
+                                        }));
+                                      }}
+                                      style={{
+                                        padding: '6px 10px',
+                                        borderRadius: 6,
+                                        border: '1px solid rgba(60,90,138,0.8)',
+                                        background: 'rgba(14,20,30,0.95)',
+                                        color: '#f2f6ff',
+                                        fontSize: '0.78rem',
+                                      }}
+                                    >
+                                      <option value="">Choose a script…</option>
+                                      {pythonScripts.map((script) => (
+                                        <option key={script.id} value={script.id}>
+                                          {script.fileName}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              )
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
                   <div style={{ border: '1px solid #202c44', borderRadius: 9, overflow: 'hidden' }}>
                     <Editor
                       height={editorHeight}
@@ -3900,61 +4228,51 @@ export default function NotebookWorkbench({
                   </div>
                 )}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => runCellById(cell.id)}
-                    disabled={runningCellId === cell.id}
-                    style={{
-                      border: 'none',
-                      background: 'transparent',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: runningCellId === cell.id ? 'default' : 'pointer',
-                      padding: 4,
-                      opacity: runningCellId === cell.id ? 0.6 : 1,
-                    }}
-                    aria-label="Run cell"
-                    title="Run cell"
-                  >
-                    {runningCellId === cell.id ? (
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          width: 20,
-                          height: 20,
-                          borderRadius: '50%',
-                          border: '2px solid rgba(120,170,255,0.35)',
-                          borderTopColor: 'rgba(120,170,255,0.85)',
-                          animation: 'spin 0.8s linear infinite',
-                        }}
-                      />
-                    ) : (
-                      <img src={runIcon} alt="Run" style={{ width: 20, height: 20 }} />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addCell}
-                    style={{
-                      border: 'none',
-                      background: 'transparent',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      padding: 4,
-                    }}
-                    aria-label="Add cell"
-                    title="Add cell"
-                  >
-                    <img src={addCellIcon} alt="Add" style={{ width: 18, height: 18 }} />
-                  </button>
-                  {cells.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <button
                       type="button"
-                      onClick={() => removeCell(cell.id)}
+                      onClick={() => runCellById(cell.id)}
+                      disabled={runningCellId === cell.id}
+                      style={{
+                        border: 'none',
+                        background: 'rgba(30,46,72,0.85)',
+                        borderRadius: 6,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: runningCellId === cell.id ? 'default' : 'pointer',
+                        padding: '6px 10px',
+                        gap: 6,
+                        color: '#e6f0ff',
+                        fontSize: '0.76rem',
+                        opacity: runningCellId === cell.id ? 0.6 : 1,
+                      }}
+                      aria-label="Run cell"
+                      title="Run cell"
+                    >
+                      {runningCellId === cell.id ? (
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: 14,
+                            height: 14,
+                            borderRadius: '50%',
+                            border: '2px solid rgba(120,170,255,0.35)',
+                            borderTopColor: 'rgba(120,170,255,0.85)',
+                            animation: 'spin 0.8s linear infinite',
+                          }}
+                        />
+                      ) : (
+                        <img src={runIcon} alt="Run" style={{ width: 14, height: 14 }} />
+                      )}
+                      <span>Run</span>
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button
+                      type="button"
+                      onClick={addCell}
                       style={{
                         border: 'none',
                         background: 'transparent',
@@ -3964,12 +4282,31 @@ export default function NotebookWorkbench({
                         cursor: 'pointer',
                         padding: 4,
                       }}
-                      aria-label="Delete cell"
-                      title="Delete cell"
+                      aria-label="Add cell"
+                      title="Add cell"
                     >
-                      <img src={removeCellIcon} alt="Remove" style={{ width: 18, height: 18 }} />
+                      <img src={addCellIcon} alt="Add" style={{ width: 22, height: 22 }} />
                     </button>
-                  )}
+                    {cells.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeCell(cell.id)}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          padding: 4,
+                        }}
+                        aria-label="Delete cell"
+                        title="Delete cell"
+                      >
+                        <img src={removeCellIcon} alt="Remove" style={{ width: 20, height: 20 }} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </section>
             );

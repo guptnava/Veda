@@ -1,0 +1,30 @@
+stdout
+"🔹 Base SQL:
+SELECT * FROM sales
+🔹 Column Types:
+{'customer_id': 'number',
+ 'product_id': 'number',
+ 'quantity': 'number',
+ 'region': 'string',
+ 'sale_date': 'date',
+ 'sale_id': 'number',
+ 'total_amount': 'number',
+ 'unit_price': 'number'}
+🔹 Searchable Columns:
+['sale_id', 'customer_id', 'product_id', 'sale_date', 'quantity', 'unit_price', 'total_amount', 'region']
+🔹 DataFrame Preview:
+   sale_id  customer_id  product_id  ... unit_price  total_amount         region
+0   448467            4         102  ...      900.0           900  North America
+1   448468            5         105  ...      350.0           700         Europe
+
+[2 rows x 8 columns]
+🔹 Schema Summary:
+sale_id           int64
+customer_id       int64
+product_id        int64
+sale_date        object
+quantity        float64
+unit_price      float64
+total_amount      int64
+region           object
+dtype: object"

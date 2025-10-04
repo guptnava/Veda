@@ -90,6 +90,7 @@ function setDistinctCache(key, data) {
 
 const UPLOADS_ROOT = path.resolve(__dirname, '../uploads');
 const CSV_UPLOAD_DIR = path.join(UPLOADS_ROOT, 'csv');
+const PYTHON_SCRIPTS_DIR = path.join(UPLOADS_ROOT, 'python_scripts');
 
 async function ensureDir(dirPath) {
   await fs.promises.mkdir(dirPath, { recursive: true });
@@ -1016,6 +1017,119 @@ app.post('/api/table/csv_entries', async (req, res) => {
       }
     }
     res.status(500).json({ error: e.message });
+  }
+});
+
+function parsePythonScriptId(fileName) {
+  if (typeof fileName !== 'string') return null;
+  const separatorIndex = fileName.indexOf('__');
+  if (separatorIndex === -1) return null;
+  return {
+    id: fileName.slice(0, separatorIndex),
+    name: fileName.slice(separatorIndex + 2),
+  };
+}
+
+async function findPythonScriptFile(id) {
+  if (!id) return null;
+  await ensureDir(PYTHON_SCRIPTS_DIR);
+  const entries = await fs.promises.readdir(PYTHON_SCRIPTS_DIR);
+  for (const entry of entries) {
+    if (entry.startsWith(`${id}__`)) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+app.get('/api/python_scripts', async (req, res) => {
+  try {
+    await ensureDir(PYTHON_SCRIPTS_DIR);
+    const entries = await fs.promises.readdir(PYTHON_SCRIPTS_DIR);
+    const scripts = await Promise.all(
+      entries.map(async (fileName) => {
+        const parsed = parsePythonScriptId(fileName);
+        if (!parsed) return null;
+        const fullPath = path.join(PYTHON_SCRIPTS_DIR, fileName);
+        const stat = await fs.promises.stat(fullPath);
+        return {
+          id: parsed.id,
+          fileName: parsed.name,
+          storedPath: path.posix.join('python_scripts', fileName),
+          size: stat.size,
+          updatedAt: stat.mtime.toISOString(),
+        };
+      }),
+    );
+    res.json({ scripts: scripts.filter(Boolean) });
+  } catch (err) {
+    console.error('python_scripts list failed', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/python_scripts', async (req, res) => {
+  let storedFullPath = null;
+  try {
+    const { fileName, content } = req.body || {};
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ error: 'content required' });
+    }
+    let safeName = sanitizeFileName(fileName);
+    if (!safeName) safeName = 'script.py';
+    if (!safeName.toLowerCase().endsWith('.py')) safeName = `${safeName}.py`;
+    const uniqueId = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const storedRelative = path.posix.join('python_scripts', `${uniqueId}__${safeName}`);
+    storedFullPath = ensureWithin(UPLOADS_ROOT, storedRelative);
+    await ensureDir(path.dirname(storedFullPath));
+    await fs.promises.writeFile(storedFullPath, content, 'utf8');
+    const stat = await fs.promises.stat(storedFullPath);
+    return res.status(201).json({
+      script: {
+        id: uniqueId,
+        fileName: safeName,
+        storedPath: storedRelative,
+        size: stat.size,
+        updatedAt: stat.mtime.toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error('python_script create failed', err);
+    if (storedFullPath) {
+      try {
+        await fs.promises.unlink(storedFullPath);
+      } catch (unlinkErr) {
+        console.error('failed to remove python script after error', unlinkErr);
+      }
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/python_scripts/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const fileName = await findPythonScriptFile(id);
+    if (!fileName) {
+      return res.status(404).json({ error: 'Script not found' });
+    }
+    const fullPath = path.join(PYTHON_SCRIPTS_DIR, fileName);
+    const content = await fs.promises.readFile(fullPath, 'utf8');
+    const stat = await fs.promises.stat(fullPath);
+    const parsed = parsePythonScriptId(fileName);
+    return res.json({
+      script: {
+        id,
+        fileName: parsed ? parsed.name : fileName,
+        storedPath: path.posix.join('python_scripts', fileName),
+        size: stat.size,
+        updatedAt: stat.mtime.toISOString(),
+        content,
+      },
+    });
+  } catch (err) {
+    console.error('python_script load failed', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
